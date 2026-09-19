@@ -2,7 +2,7 @@ name: himedeco-poll
 
 on:
   schedule:
-    - cron: "3 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
