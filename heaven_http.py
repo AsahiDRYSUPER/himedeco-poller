@@ -185,8 +185,9 @@ class HeavenClient:
                     data[name] = el.get("value") or "更新する"
                 continue
             if typ == "radio":
-                if el.get("id") == "display_flg_2":  # 「全て表示」
+                if el.get("id") == "display_flg_2":  # 「全て表示」(画面のJSは、これを選ぶと girl_display_flg を 02 にする)
                     data[name] = el.get("value")
+                    data["girl_display_flg"] = "02"
                 continue
             if typ == "checkbox":
                 if el.has_attr("checked"):
@@ -194,6 +195,8 @@ class HeavenClient:
                 continue
             if name == "reply_body":
                 data[name] = text
+                continue
+            if name == "girl_display_flg":
                 continue
             data[name] = el.get_text() if el.name == "textarea" else (el.get("value") or "")
         action = form.get("action") or f"C8ReviewDetail.php?shopdir={self.shopdir}"

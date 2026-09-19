@@ -2,7 +2,7 @@ name: himedeco-poll
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "3 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -24,7 +24,7 @@ concurrency:
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 62
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,6 +34,7 @@ jobs:
       - name: Poll
         env:
           REPLY_DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || (inputs.dry_run == false && 'false' || 'true') }}
+          LOOP_MINUTES: ${{ github.event_name == 'schedule' && '57' || '0' }}
           VERIFY_ORDER: ${{ inputs.verify_order && '1' || '' }}
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
         run: python3 poll.py

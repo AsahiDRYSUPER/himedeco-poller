@@ -119,4 +119,15 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # 1時間の定期実行の中で、5分おきに繰り返す(GitHubの5分おき定期実行は取りこぼしが多いため)
+    loop_min = int(os.environ.get("LOOP_MINUTES", "0") or 0)
+    if loop_min <= 0:
+        raise SystemExit(main())
+    end = time.time() + loop_min * 60
+    code = 0
+    while True:
+        code = main()
+        if time.time() + 300 >= end:
+            break
+        time.sleep(300)
+    raise SystemExit(code)
