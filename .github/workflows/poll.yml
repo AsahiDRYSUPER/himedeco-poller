@@ -2,9 +2,13 @@ name: himedeco-poll
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
+      loop:
+        description: "連続実行(前の実行が終わるたびに、次を自動で起動する)"
+        type: boolean
+        default: false
       dry_run:
         description: "確認のみ（自動返信しない）"
         type: boolean
@@ -16,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: himedeco-poll
@@ -33,8 +38,8 @@ jobs:
       - run: pip install requests beautifulsoup4
       - name: Poll
         env:
-          REPLY_DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || (inputs.dry_run == false && 'false' || 'true') }}
-          LOOP_MINUTES: ${{ github.event_name == 'schedule' && '57' || '0' }}
+          REPLY_DRY_RUN: ${{ (github.event_name == 'schedule' || inputs.loop) && 'false' || (inputs.dry_run == false && 'false' || 'true') }}
+          LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '57' || '0' }}
           VERIFY_ORDER: ${{ inputs.verify_order && '1' || '' }}
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
         run: python3 poll.py
@@ -45,3 +50,8 @@ jobs:
           git config user.email "actions@github.com"
           git add status.json
           git diff --cached --quiet || { git commit -m "status" && git push; } || true
+      - name: Chain next run
+        if: always() && (github.event_name == 'schedule' || inputs.loop)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" -f loop=true || true

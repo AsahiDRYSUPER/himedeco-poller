@@ -2,9 +2,13 @@ name: review-reply
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
+      loop:
+        description: "連続実行(前の実行が終わるたびに、次を自動で起動する)"
+        type: boolean
+        default: false
       dry_run:
         description: "確認のみ（返信を投稿しない）"
         type: boolean
@@ -12,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: review-reply
@@ -29,8 +34,8 @@ jobs:
       - run: pip install requests beautifulsoup4
       - name: Reply
         env:
-          REPLY_DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || (inputs.dry_run == false && 'false' || 'true') }}
-          LOOP_MINUTES: ${{ github.event_name == 'schedule' && '55' || '0' }}
+          REPLY_DRY_RUN: ${{ (github.event_name == 'schedule' || inputs.loop) && 'false' || (inputs.dry_run == false && 'false' || 'true') }}
+          LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '55' || '0' }}
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
         run: python3 reply_reviews.py
       - name: Save status
@@ -40,3 +45,8 @@ jobs:
           git config user.email "actions@github.com"
           git add reply_status.json
           git diff --cached --quiet || { git commit -m "status" && git push; } || true
+      - name: Chain next run
+        if: always() && (github.event_name == 'schedule' || inputs.loop)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" -f loop=true || true
