@@ -1,0 +1,43 @@
+name: board-collect
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      loop:
+        description: "連続実行(前の実行が終わるたびに、次を自動で起動する)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: board-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 62
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests beautifulsoup4 cryptography
+      - name: Collect
+        env:
+          CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
+          CASTS_MAP: ${{ secrets.CASTS_MAP }}
+          TODO_KEY: ${{ secrets.TODO_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '55' || '0' }}
+        run: python3 collect_loop.py
+      - name: Chain next run
+        if: always() && (github.event_name == 'schedule' || inputs.loop)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" -f loop=true || true

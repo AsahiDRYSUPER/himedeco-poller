@@ -1,0 +1,13 @@
+{
+  "shops": {
+    "cg_kirakira":   {"label": "キラキラ学園",     "target": {"weekday": 20, "weekend": 25}, "rival": "COCKTAIL"},
+    "s_matikado":    {"label": "街角レディ",       "target": {"weekday": 15, "weekend": 20}},
+    "mrs_orange":    {"label": "オレンジな気持ち", "target": {"weekday": 15, "weekend": 20}},
+    "potya_reen":    {"label": "ぽちゃりーん",     "target": {"weekday": 10, "weekend": 15}},
+    "venus_okayama": {"label": "VENUS",            "target": {"weekday": 7,  "weekend": 10}},
+    "torori_angel":  {"label": "とろ〜りAngel",    "target": {"weekday": 5,  "weekend": 5}},
+    "undercover":    {"label": "UNDERCOVER",       "target": {"weekday": 5,  "weekend": 5}}
+  },
+  "holidays": ["20260921", "20260922", "20260923", "20261012", "20261103", "20261123", "20270101", "20270111"],
+  "weekend_note": "週末=土・日・祝日として判定"
+}
