@@ -48,6 +48,55 @@ def is_weekend(d: datetime) -> bool:
     return d.weekday() >= 5 or d.strftime("%Y%m%d") in HOLIDAYS
 
 
+FAR_BY_SHOP = {}
+FAR_CACHE = OUT_DIR / "far_shifts.json"   # 名前を含むので、公開データ(dataブランチ)には載せない
+FAR_TTL = 1800                            # 30分。8日目以降の予定は、そう頻繁には変わらない
+FAR_WEEKS = (7, 14, 21)                   # 今日から4週先まで見る
+
+
+def fetch_far(shopdir, base):
+    """8日目以降(最大4週先)の出勤日を、名前ごとに集める。
+    ヘブンの出勤APIは1回で7日分しか返さないため、基準日をずらして何回か呼ぶ。"""
+    info = SHOPS_API[shopdir]
+    out = {}
+    for wk in FAR_WEEKS:
+        day = (base + timedelta(days=wk)).strftime("%Y%m%d")
+        for g in parse_girls(fetch_shift_list(info["shopid"], info["apikey"], base_day=day)):
+            out.setdefault(clean_name(g["name"]), set()).update(x["date"] for x in g["days"] if x["start_time"])
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def load_far(base):
+    """8日目以降の出勤日を用意する。30分以内に取ったものがあれば、それを使い回す。"""
+    import time as _t
+    cached = {}
+    try:
+        x = json.loads(FAR_CACHE.read_text(encoding="utf-8"))
+        cached = x.get("shops", {})
+        if _t.time() - x.get("at", 0) < FAR_TTL:
+            FAR_BY_SHOP.update(cached)
+            return
+    except Exception:
+        pass
+    for shopdir in CONFIG["shops"]:
+        try:
+            FAR_BY_SHOP[shopdir] = fetch_far(shopdir, base)
+        except Exception as e:
+            FAR_BY_SHOP[shopdir] = cached.get(shopdir, {})   # 取れなければ前回のものを使う
+            print(shopdir, "8日目以降の出勤を取れませんでした:", type(e).__name__)
+    try:
+        FAR_CACHE.write_text(json.dumps({"at": _t.time(), "shops": FAR_BY_SHOP}, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def future_dates(shopdir, g, today):
+    """その子の「今日より後の出勤日」。7日先までの分と、8日目以降の分を合わせる。"""
+    ds = {x["date"] for x in g["days"] if x["date"] > today and x["start_time"]}
+    ds |= {d for d in FAR_BY_SHOP.get(shopdir, {}).get(clean_name(g["name"]), []) if d > today}
+    return sorted(ds)
+
+
 def attendance(shopdir, days):
     info = SHOPS_API[shopdir]
     girls = parse_girls(fetch_shift_list(info["shopid"], info["apikey"], base_day=days[0].strftime("%Y%m%d")))
@@ -56,7 +105,7 @@ def attendance(shopdir, days):
     no_next = 0  # 今日出勤していて、明日以降の出勤が1件も出ていない人数(人数のみ。名前は載せない)
     for g in girls:
         t = next((x for x in g["days"] if x["date"] == today), None)
-        if t and t["start_time"] and not any(x["date"] > today and x["start_time"] for x in g["days"]):
+        if t and t["start_time"] and not future_dates(shopdir, g, today):
             no_next += 1
     ATT_EXTRA[shopdir] = no_next
     out = {}
@@ -129,7 +178,7 @@ def todo_list(today: str, prev=None):
         rows, seen = [], set()
         for g in girls:
             t = next((x for x in g["days"] if x["date"] == today and x["start_time"]), None)
-            if t and not any(x["date"] > today and x["start_time"] for x in g["days"]):
+            if t and not future_dates(shopdir, g, today):
                 nm = clean_name(g["name"])
                 rows.append({"name": nm, "start": t["start_time"], "end": t["end_time"], "status": "open"})
                 seen.add(nm)
@@ -139,7 +188,8 @@ def todo_list(today: str, prev=None):
             g = by_name.get(pr["name"])
             nxt = None
             if g:
-                nxt = next((x["date"] for x in sorted(g["days"], key=lambda d: d["date"]) if x["date"] > today and x["start_time"]), None)
+                fd = future_dates(shopdir, g, today)
+                nxt = fd[0] if fd else None
             if nxt or pr.get("status") == "ok":
                 rows.append({"name": pr["name"], "start": pr["start"], "end": pr["end"], "status": "ok", "next": nxt or pr.get("next")})
             else:
@@ -177,7 +227,7 @@ def next_shifts(today):
         if g is None:
             out[hashlib.sha256(("shift:" + c["girl_id"]).encode()).hexdigest()[:16]] = {"next": "", "today": False}
             continue
-        work = sorted(x["date"] for x in g["days"] if x["start_time"])
+        work = sorted({x["date"] for x in g["days"] if x["start_time"]} | set(FAR_BY_SHOP.get(c["shopdir"], {}).get(clean_name(g["name"]), [])))
         nxt = next((d for d in work if d > today), "")
         key = hashlib.sha256(("shift:" + c["girl_id"]).encode()).hexdigest()[:16]
         out[key] = {"next": nxt, "today": today in work}
@@ -187,6 +237,7 @@ def next_shifts(today):
 def main():
     now = datetime.now(JST)
     days = [now + timedelta(days=i) for i in range(7)]
+    load_far(now)   # 8日目以降(最大4週先)の出勤。これが無いと「10月の日程を出した子」を未提出と誤判定する
     shops = []
     for shopdir, cfg in CONFIG["shops"].items():
         row = {"key": shopdir, "label": cfg["label"], "target": cfg["target"], "attendance": {}, "no_next": None, "error": ""}
@@ -207,8 +258,17 @@ def main():
     }
     today_s = now.strftime("%Y%m%d")
     shifts = {"generated_at": now.isoformat(timespec="seconds"), "shifts": next_shifts(today_s)}
-    todo_shops = todo_list(today_s, load_prev_todo())
-    todo_enc = encrypt_todo({"generated_at": now.isoformat(timespec="seconds"), "date": today_s, "shops": todo_shops})
+    prev = load_prev_todo()
+    # 日付が変わったら、その瞬間に前の日の分を「昨日」として確定させ、そのまま持ち回る
+    if prev and prev.get("date") == today_s:
+        yday = prev.get("prev")
+    elif prev:
+        yday = {"date": prev.get("date", ""), "shops": prev.get("shops", [])}
+    else:
+        yday = None
+    todo_shops = todo_list(today_s, prev)
+    todo_enc = encrypt_todo({"generated_at": now.isoformat(timespec="seconds"), "date": today_s,
+                             "shops": todo_shops, "prev": yday})
     (OUT_DIR / "shops.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     (OUT_DIR / "next_shifts.json").write_text(json.dumps(shifts, ensure_ascii=False), encoding="utf-8")
     if todo_enc:
