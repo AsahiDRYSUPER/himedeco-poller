@@ -18,6 +18,11 @@ end = time.time() + LOOP_MIN * 60
 while True:
     t0 = time.time()
     r = subprocess.run([sys.executable, "collect_shops.py"])
+    # 姫デコチャットの見張り(新しい連絡があればスマホへ通知)。ここで失敗しても、ボードのデータ更新は止めない
+    try:
+        subprocess.run([sys.executable, "watch_chat.py"], timeout=240)
+    except Exception as e:
+        print("姫デコチャットの見張りに失敗:", type(e).__name__)
     if r.returncode == 0:
         publish()
     if time.time() + INTERVAL > end:

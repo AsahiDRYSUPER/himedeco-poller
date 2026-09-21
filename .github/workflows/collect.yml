@@ -31,6 +31,8 @@ jobs:
       - name: Collect
         env:
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
+          CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           CASTS_MAP: ${{ secrets.CASTS_MAP }}
           TODO_KEY: ${{ secrets.TODO_KEY }}
           GH_TOKEN: ${{ github.token }}
