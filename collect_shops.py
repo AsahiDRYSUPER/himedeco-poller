@@ -54,6 +54,52 @@ FAR_TTL = 1800                            # 30分。8日目以降の予定は、
 FAR_WEEKS = (7, 14, 21)                   # 今日から4週先まで見る
 
 
+PAST_BY_SHOP = {}
+PAST_CACHE = OUT_DIR / "past_shifts.json"   # 名前を含むので、公開データ(dataブランチ)には載せない
+PAST_TTL = 10800                            # 3時間。過ぎた日の出勤は、もう変わらない
+
+
+def fetch_past(shopdir, base):
+    """今月1日から今日までの出勤日を、名前ごとに集める(がんばりカレンダー用)。
+    出勤APIは1回で7日分しか返さないので、1日・8日・15日…と基準日をずらして呼ぶ。"""
+    info = SHOPS_API[shopdir]
+    out = {}
+    day = base.replace(day=1)
+    while day.date() <= base.date():
+        for g in parse_girls(fetch_shift_list(info["shopid"], info["apikey"], base_day=day.strftime("%Y%m%d"))):
+            d = out.setdefault(clean_name(g["name"]), {})
+            for x in g["days"]:
+                if x["start_time"]:
+                    d[x["date"]] = [x["start_time"][:4], x["end_time"][:4]]
+        day += timedelta(days=7)
+    return out
+
+
+def load_past(base):
+    """今月の過ぎた日の出勤を用意する。3時間以内に取ったものがあれば、それを使い回す。"""
+    import time as _t
+    cached = {}
+    try:
+        x = json.loads(PAST_CACHE.read_text(encoding="utf-8"))
+        cached = x.get("shops", {})
+        if _t.time() - x.get("at", 0) < PAST_TTL and x.get("month") == base.strftime("%Y%m"):
+            PAST_BY_SHOP.update(cached)
+            return
+    except Exception:
+        pass
+    for shopdir in CONFIG["shops"]:
+        try:
+            PAST_BY_SHOP[shopdir] = fetch_past(shopdir, base)
+        except Exception as e:
+            PAST_BY_SHOP[shopdir] = cached.get(shopdir, {})
+            print(shopdir, "今月の過ぎた日の出勤を取れませんでした:", type(e).__name__)
+    try:
+        PAST_CACHE.write_text(json.dumps({"at": _t.time(), "month": base.strftime("%Y%m"), "shops": PAST_BY_SHOP},
+                                         ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def fetch_far(shopdir, base):
     """8日目以降(最大4週先)の出勤日を、名前ごとに集める。
     ヘブンの出勤APIは1回で7日分しか返さないため、基準日をずらして何回か呼ぶ。"""
@@ -239,8 +285,16 @@ def next_shifts(today):
                 times.setdefault(k, v)
         work = sorted(set(times) | (set(far) if not isinstance(far, dict) else set()))
         nxt = next((d for d in work if d > today), "")
+        # がんばりカレンダー用に、今月の過ぎた日の出勤も合わせる
+        month = today[:6]
+        past = PAST_BY_SHOP.get(c["shopdir"], {}).get(clean_name(g["name"]), {})
+        if isinstance(past, dict):
+            for k, v in past.items():
+                times.setdefault(k, v)
         key = hashlib.sha256(("shift:" + c["girl_id"]).encode()).hexdigest()[:16]
-        out[key] = {"next": nxt, "today": today in work, "shifts": {d: times[d] for d in sorted(times) if d >= today}}
+        out[key] = {"next": nxt, "today": today in work,
+                    "shifts": {d: times[d] for d in sorted(times) if d >= today},
+                    "month": {d: times[d] for d in sorted(times) if d[:6] == month}}
     return out
 
 
@@ -248,6 +302,7 @@ def main():
     now = datetime.now(JST)
     days = [now + timedelta(days=i) for i in range(7)]
     load_far(now)   # 8日目以降(最大4週先)の出勤。これが無いと「10月の日程を出した子」を未提出と誤判定する
+    load_past(now)  # 今月の過ぎた日の出勤(がんばりカレンダー用)
     shops = []
     for shopdir, cfg in CONFIG["shops"].items():
         row = {"key": shopdir, "label": cfg["label"], "target": cfg["target"], "attendance": {}, "no_next": None, "error": ""}
