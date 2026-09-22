@@ -62,8 +62,11 @@ def fetch_far(shopdir, base):
     for wk in FAR_WEEKS:
         day = (base + timedelta(days=wk)).strftime("%Y%m%d")
         for g in parse_girls(fetch_shift_list(info["shopid"], info["apikey"], base_day=day)):
-            out.setdefault(clean_name(g["name"]), set()).update(x["date"] for x in g["days"] if x["start_time"])
-    return {k: sorted(v) for k, v in out.items()}
+            d = out.setdefault(clean_name(g["name"]), {})
+            for x in g["days"]:
+                if x["start_time"]:
+                    d[x["date"]] = [x["start_time"][:4], x["end_time"][:4]]
+    return out   # {名前: {日付: [開始HHMM, 終了HHMM]}}
 
 
 def load_far(base):
@@ -227,10 +230,17 @@ def next_shifts(today):
         if g is None:
             out[hashlib.sha256(("shift:" + c["girl_id"]).encode()).hexdigest()[:16]] = {"next": "", "today": False}
             continue
-        work = sorted({x["date"] for x in g["days"] if x["start_time"]} | set(FAR_BY_SHOP.get(c["shopdir"], {}).get(clean_name(g["name"]), [])))
+        # 日ごとの出勤時間(7日先まではAPIの本体、その先は8日目以降の分)。
+        # 出勤時間はヘブンの公開ページにも出ている情報。名前は載せず、キーはgirl_idのハッシュのまま
+        times = {x["date"]: [x["start_time"][:4], x["end_time"][:4]] for x in g["days"] if x["start_time"]}
+        far = FAR_BY_SHOP.get(c["shopdir"], {}).get(clean_name(g["name"]), {})
+        if isinstance(far, dict):
+            for k, v in far.items():
+                times.setdefault(k, v)
+        work = sorted(set(times) | (set(far) if not isinstance(far, dict) else set()))
         nxt = next((d for d in work if d > today), "")
         key = hashlib.sha256(("shift:" + c["girl_id"]).encode()).hexdigest()[:16]
-        out[key] = {"next": nxt, "today": today in work}
+        out[key] = {"next": nxt, "today": today in work, "shifts": {d: times[d] for d in sorted(times) if d >= today}}
     return out
 
 
