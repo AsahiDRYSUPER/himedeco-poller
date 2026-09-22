@@ -55,8 +55,25 @@ FAR_WEEKS = (7, 14, 21)                   # 今日から4週先まで見る
 
 
 PAST_BY_SHOP = {}
+PAST_OK = {}                                # 店ごとに、過ぎた日が本当に取れたかどうか
 PAST_CACHE = OUT_DIR / "past_shifts.json"   # 名前を含むので、公開データ(dataブランチ)には載せない
 PAST_TTL = 10800                            # 3時間。過ぎた日の出勤は、もう変わらない
+
+
+def past_is_real(shopdir, base):
+    """その店の「過ぎた日の出勤」が、月のはじめの方まで本当に取れているか。
+
+    ヘブンの出勤APIは、基準日を過去にしても、過ぎた日をほとんど返さない(2026-09-23に判明。
+    9月23日に1日・8日・15日を基準に呼んでも、返ってきたのは21日以降だけだった)。
+    取れていないまま月のカレンダーを出すと「今月は2日しか出勤していない」と嘘を見せてしまうので、
+    月の3日目より前の出勤が1件でもあるかどうかで、本物かどうかを判定する。"""
+    if base.day <= 4:
+        return False   # 月のはじめは、そもそも過ぎた日がほとんど無いので判定できない
+    limit = base.strftime("%Y%m") + "03"
+    for days in (PAST_BY_SHOP.get(shopdir) or {}).values():
+        if any(d < limit for d in days):
+            return True
+    return False
 
 
 def fetch_past(shopdir, base):
@@ -84,6 +101,8 @@ def load_past(base):
         cached = x.get("shops", {})
         if _t.time() - x.get("at", 0) < PAST_TTL and x.get("month") == base.strftime("%Y%m"):
             PAST_BY_SHOP.update(cached)
+            for shopdir in CONFIG["shops"]:
+                PAST_OK[shopdir] = past_is_real(shopdir, base)
             return
     except Exception:
         pass
@@ -93,6 +112,9 @@ def load_past(base):
         except Exception as e:
             PAST_BY_SHOP[shopdir] = cached.get(shopdir, {})
             print(shopdir, "今月の過ぎた日の出勤を取れませんでした:", type(e).__name__)
+        PAST_OK[shopdir] = past_is_real(shopdir, base)
+        if not PAST_OK[shopdir]:
+            print(shopdir, "過ぎた日の出勤が返ってきません(カレンダーには出しません)")
     try:
         PAST_CACHE.write_text(json.dumps({"at": _t.time(), "month": base.strftime("%Y%m"), "shops": PAST_BY_SHOP},
                                          ensure_ascii=False), encoding="utf-8")
@@ -292,9 +314,13 @@ def next_shifts(today):
             for k, v in past.items():
                 times.setdefault(k, v)
         key = hashlib.sha256(("shift:" + c["girl_id"]).encode()).hexdigest()[:16]
-        out[key] = {"next": nxt, "today": today in work,
-                    "shifts": {d: times[d] for d in sorted(times) if d >= today},
-                    "month": {d: times[d] for d in sorted(times) if d[:6] == month}}
+        row = {"next": nxt, "today": today in work,
+               "shifts": {d: times[d] for d in sorted(times) if d >= today}}
+        # 過ぎた日が本当に取れている店だけ、月のカレンダー用のデータを出す。
+        # 取れていないのに出すと「今月は2日しか出勤していない」と嘘を見せてしまう
+        if PAST_OK.get(c["shopdir"]):
+            row["month"] = {d: times[d] for d in sorted(times) if d[:6] == month}
+        out[key] = row
     return out
 
 
