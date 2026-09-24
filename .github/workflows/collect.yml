@@ -38,6 +38,7 @@ jobs:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           SHIFT_AUTO: ${{ vars.SHIFT_AUTO }}
+          CAST_MYPAGE_TOKEN: ${{ secrets.CAST_MYPAGE_TOKEN }}
           CASTS_MAP: ${{ secrets.CASTS_MAP }}
           TODO_KEY: ${{ secrets.TODO_KEY }}
           GH_TOKEN: ${{ github.token }}

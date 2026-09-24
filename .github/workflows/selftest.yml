@@ -22,3 +22,7 @@ jobs:
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
         run: python3 shift_auto.py --selftest s_matikado
+      - name: 裏姫デコの作成（cast-mypage）を起動できるか（鍵があれば）
+        env:
+          CAST_MYPAGE_TOKEN: ${{ secrets.CAST_MYPAGE_TOKEN }}
+        run: python3 cast_mypage.py --test

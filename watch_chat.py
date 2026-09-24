@@ -18,6 +18,9 @@
 
 止めたい時: リポジトリの変数 SHIFT_AUTO を off にすると、上げずに通知だけに戻る。
 
+裏姫デコの依頼（「裏姫デコほしい」）も、ここで見つける。見つけたら非公開の cast-mypage の仕組みを起動して、
+ページを作って本人に送ってもらう（cast_mypage.py。鍵が無ければ通知だけ）。
+
 公開リポジトリで動くので、キャスト名やメッセージの中身はログに出さない(出すのは店名と件数だけ)。
 chat_seen.json に入れるのもメッセージのID(ただの数字)だけで、名前も本文も入れない。
 """
@@ -33,6 +36,7 @@ from bs4 import BeautifulSoup
 
 from heaven_http import BASE, HeavenClient, LoginError, load_credentials
 from shift_reply import read_shift_reply
+import cast_mypage
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
@@ -53,6 +57,7 @@ BOARD_URL = os.environ.get("BOARD_URL", "https://union-boards-4k7q.pages.dev/sho
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
 SHIFT_AUTO = os.environ.get("SHIFT_AUTO", "on").strip().lower() not in ("off", "0", "false", "no")
+URAHIME_WORDS = ("裏姫デコ", "うら姫デコ", "ウラ姫デコ", "裏ひめデコ", "裏姫でこ", "裏姫ﾃﾞｺ")
 
 
 def clean_name(name: str) -> str:
@@ -158,11 +163,16 @@ def post_ntfy(title, body, extra=None):
         print("通知を送れませんでした:", type(e).__name__)
 
 
-def notify_one(x, result=None):
+def notify_one(x, result=None, urahime=None):
     r = x["read"]
     body = x["body"][:300]
     extra = None
-    if result is not None:
+    if urahime is not None:
+        ok, msg = urahime
+        extra = {"Tags": "sparkles", "Priority": "high"}
+        body += "\n\n→ 裏姫デコの依頼。" + ("作成を起動しました（15分ほどで本人に届きます）" if ok else
+                                      f"自動で起動できませんでした（{msg}）。クロードに「{x['name']}さんの裏姫デコ作って」と言ってください")
+    elif result is not None:
         extra = {"Tags": "calendar", "Priority": "high"}
         if result["ok"]:
             body += f"\n\n✅ 出勤を上げました: {result['detail']}"
@@ -213,8 +223,16 @@ def main():
     fresh.sort(key=lambda x: x["at"])
     for x in fresh:
         x["read"] = read_shift_reply(x["body"], now.replace(tzinfo=None))
+    for x in fresh:
+        x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS)
     n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
-    print(f"新しい連絡 {len(fresh)}件（うち出勤の返事で条件なし {n_clear}件）→ " + ("上げて通知します" if SHIFT_AUTO else "通知します（自動上げは止めてある）"))
+    n_ura = sum(1 for x in fresh if x["urahime"])
+    print(f"新しい連絡 {len(fresh)}件（うち出勤の返事で条件なし {n_clear}件、裏姫デコの依頼 {n_ura}件）→ "
+          + ("上げて通知します" if SHIFT_AUTO else "通知します（自動上げは止めてある）"))
+    urahime = None
+    if n_ura:
+        urahime = cast_mypage.dispatch()
+        print(f"裏姫デコの作成（cast-mypage）を起動: {'OK' if urahime[0] else 'NG ' + urahime[1]}")
 
     many = len(fresh) > MAX_NOTIFY
     if many:
@@ -228,7 +246,9 @@ def main():
     base = set(seen)
     for x in fresh:
         try:
-            if SHIFT_AUTO and x["read"]["status"] == "clear":
+            if x["urahime"]:
+                notify_one(x, urahime=urahime)
+            elif SHIFT_AUTO and x["read"]["status"] == "clear":
                 import shift_auto
                 res = shift_auto.handle(clis.get(x["shopdir"]), x["shopdir"], x["shop"], x["gid"], x["name"],
                                         x["read"]["shifts"], now)
