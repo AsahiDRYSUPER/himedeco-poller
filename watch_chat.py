@@ -117,6 +117,28 @@ def pending_for_shop(shopdir: str):
     return out
 
 
+# ---- 出勤の返事らしい文から、日にちと時間を読み取る（通知に添えるだけ。登録はしない）----
+_DAY = r"(\d{1,2})\s*日"
+_TIME = r"(\d{1,2})(?::(\d{2}))?\s*[時:]?"
+_RANGE = re.compile(_DAY + r"[^\d]{0,6}" + r"(\d{1,2})(?::(\d{2}))?\s*(?:時)?\s*[-〜～~ー]\s*(\d{1,2})(?::(\d{2}))?\s*(?:時)?")
+_SHIFT_WORDS = ("出勤", "出れ", "出られ", "入れ", "行け", "時", "日")
+
+
+def shift_hint(body: str) -> str:
+    """「26日 12-20時」のような部分を見つけて「26日 12:00〜20:00」の形にする。無ければ空。"""
+    t = (body or "").replace("：", ":").replace("　", " ")
+    found = []
+    for m in _RANGE.finditer(t):
+        d, h1, m1, h2, m2 = m.group(1), m.group(2), m.group(3) or "00", m.group(4), m.group(5) or "00"
+        if 0 <= int(h1) <= 29 and 0 <= int(h2) <= 29:
+            found.append(f"{int(d)}日 {int(h1):02d}:{m1}〜{int(h2):02d}:{m2}")
+    if found:
+        return " / ".join(found)
+    if re.search(_DAY, t) and any(w in t for w in _SHIFT_WORDS):
+        return "日にちはあるが時間が読めない"
+    return ""
+
+
 def notify(items):
     """スマホへ通知を送る。ntfyのトピック名は金庫(GitHub Secret)から受け取る。"""
     if not NTFY_TOPIC:
@@ -142,7 +164,11 @@ def notify(items):
              {"Priority": "high"})
         return
     for x in items:
-        post(f'{x["shop"]} {x["name"]}', x["body"][:400])
+        hint = shift_hint(x["body"])
+        body = x["body"][:400]
+        if hint:
+            body += f"\n\n→ 出勤の返事かも: {hint}\n上げるなら「{x['name']} {hint} で上げて」とクロードに言ってください"
+        post(f'{x["shop"]} {x["name"]}', body, {"Tags": "calendar", "Priority": "high"} if hint else None)
 
 
 def main():
