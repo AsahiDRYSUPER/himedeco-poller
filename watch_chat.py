@@ -1,17 +1,22 @@
 """姫デコチャットを5分ごとに見張り、キャストから新しい連絡が来たらスマホへ通知する(ntfy)。
+出勤の返事が「日にち＋時間」で揃っていれば、そのまま出勤を上げて本人に「上げました」と返す（shift_auto.py）。
 
 なぜ必要か:
     姫デコチャットの「返事待ち」は、これまでボードを開いたときにしか分からなかった。
     連絡に気づくのが遅れると、次回の出勤を出してくれた子を待たせてしまう。
+    出勤は早く上げないと損（予約が入らない）なので、迷いの無い返事は人を待たずに上げる（一希さん 2026-09-24）。
 
 どう判断するか:
     「そのやりとりの最後の発言がキャストかどうか」で見る。ヘブンの既読フラグ(opened_flg)は、
     誰かが管理画面でその子のやりとりを開いた時点で立つので、返事をしたかどうかの判断には使えない。
+    出勤の返事は、店が最後に返してから後のキャストの発言をつなげて読む（「26日 12-20時」「お願いします」と分けて送る子がいる）。
+    読み分けの決まりは shift_reply.py（元: 出勤返事の読み方.md）。条件付き・曖昧なものは上げずに通知だけ。
 
 通知の重複を防ぐ:
-    一度通知したメッセージのIDを out/chat_seen.json に残し、dataブランチで持ち回る。
+    一度扱ったメッセージのIDを out/chat_seen.json に残し、dataブランチで持ち回る。
     初回(まだファイルが無い)は、通知せずに現状をそのまま記録するだけ。
-    → 一希さんの指示(2026-09-21)「今まで溜まっている分は返信不要。今日から新しく来たものだけ」を、これで満たす。
+
+止めたい時: リポジトリの変数 SHIFT_AUTO を off にすると、上げずに通知だけに戻る。
 
 公開リポジトリで動くので、キャスト名やメッセージの中身はログに出さない(出すのは店名と件数だけ)。
 chat_seen.json に入れるのもメッセージのID(ただの数字)だけで、名前も本文も入れない。
@@ -27,6 +32,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from heaven_http import BASE, HeavenClient, LoginError, load_credentials
+from shift_reply import read_shift_reply
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
@@ -42,9 +48,11 @@ SHOPS = {
 TOP_N = 20                      # 1店舗あたり、上から何人分のやりとりを見るか
 MAX_NOTIFY = 8                  # 1回にスマホへ送る通知の上限(それを超えたらまとめて1通)
 SEEN_KEEP = 400                 # 覚えておくメッセージIDの数
+JOIN_HOURS = 48                 # キャストの続けての発言を、何時間以内ならつなげて読むか
 BOARD_URL = os.environ.get("BOARD_URL", "https://union-boards-4k7q.pages.dev/shops-08eee48153")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
+SHIFT_AUTO = os.environ.get("SHIFT_AUTO", "on").strip().lower() not in ("off", "0", "false", "no")
 
 
 def clean_name(name: str) -> str:
@@ -52,8 +60,19 @@ def clean_name(name: str) -> str:
     return re.sub(r"[\[【(（].*?[\]】)）]", "", str(name or "")).strip()
 
 
+def clean(t):
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", str(t or ""))).strip()
+
+
+def when(m):
+    try:
+        return datetime.strptime(str(m.get("create_date") or ""), "%Y/%m/%d %H:%M:%S").replace(tzinfo=JST)
+    except Exception:
+        return None
+
+
 def load_seen():
-    """前回までに通知したメッセージIDを読み戻す。初回はNone(通知せずに記録だけする合図)。"""
+    """前回までに扱ったメッセージIDを読み戻す。初回はNone(通知せずに記録だけする合図)。"""
     try:
         if SEEN_FILE.exists():
             return set(json.loads(SEEN_FILE.read_text(encoding="utf-8")).get("ids", []))
@@ -72,8 +91,9 @@ def save_seen(ids):
     SEEN_FILE.write_text(json.dumps({"ids": keep, "at": datetime.now(JST).isoformat()}, ensure_ascii=False), encoding="utf-8")
 
 
-def pending_for_shop(shopdir: str):
-    """その店で「店がまだ返事をしていない」やりとりを返す。[{id, name, at, body}]"""
+def pending_for_shop(shopdir: str, now):
+    """その店で「店がまだ返事をしていない」やりとりを返す。(cli, [{id, gid, name, at, body}])
+    body は、店が最後に返してから後のキャストの発言をつなげたもの。"""
     account, password, direct = load_credentials(shopdir)
     cli = HeavenClient(account, password, direct=direct)
     cli.login_and_select(shopdir)
@@ -93,6 +113,7 @@ def pending_for_shop(shopdir: str):
             break
 
     out = []
+    cut = now - timedelta(hours=JOIN_HOURS)
     for gid, name in girls:
         try:
             t = cli.s.post(
@@ -105,105 +126,125 @@ def pending_for_shop(shopdir: str):
         except Exception:
             continue
         talks = j.get("talk") or [] if j.get("result") == 0 else []
-        if not talks:
+        if not talks or talks[-1].get("sent_from_flg") != 2:     # 最後が店の発言 = 返事済み
             continue
-        last = talks[-1]
-        if last.get("sent_from_flg") != 2:       # 最後が店の発言 = 返事済み
-            continue
-        body = re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", str(last.get("body") or ""))).strip()
+        run = []
+        for m in reversed(talks):
+            if m.get("sent_from_flg") != 2:
+                break
+            run.append(m)
+        run.reverse()
+        last = run[-1]
+        run = [m for m in run if (when(m) or now) >= cut][-5:] or [last]
+        body = " / ".join(b for b in (clean(m.get("body")) for m in run) if b)
         if not body:
             continue
-        out.append({"id": int(last.get("id") or 0), "name": name, "at": str(last.get("create_date") or ""), "body": body})
-    return out
+        out.append({"id": int(last.get("id") or 0), "gid": gid, "name": name,
+                    "at": str(last.get("create_date") or ""), "body": body})
+    return cli, out
 
 
-# ---- 出勤の返事らしい文から、日にちと時間を読み取る（通知に添えるだけ。登録はしない）----
-_DAY = r"(\d{1,2})\s*日"
-_TIME = r"(\d{1,2})(?::(\d{2}))?\s*[時:]?"
-_RANGE = re.compile(_DAY + r"[^\d]{0,6}" + r"(\d{1,2})(?::(\d{2}))?\s*(?:時)?\s*[-〜～~ー]\s*(\d{1,2})(?::(\d{2}))?\s*(?:時)?")
-_SHIFT_WORDS = ("出勤", "出れ", "出られ", "入れ", "行け", "時", "日")
-
-
-def shift_hint(body: str) -> str:
-    """「26日 12-20時」のような部分を見つけて「26日 12:00〜20:00」の形にする。無ければ空。"""
-    t = (body or "").replace("：", ":").replace("　", " ")
-    found = []
-    for m in _RANGE.finditer(t):
-        d, h1, m1, h2, m2 = m.group(1), m.group(2), m.group(3) or "00", m.group(4), m.group(5) or "00"
-        if 0 <= int(h1) <= 29 and 0 <= int(h2) <= 29:
-            found.append(f"{int(d)}日 {int(h1):02d}:{m1}〜{int(h2):02d}:{m2}")
-    if found:
-        return " / ".join(found)
-    if re.search(_DAY, t) and any(w in t for w in _SHIFT_WORDS):
-        return "日にちはあるが時間が読めない"
-    return ""
-
-
-def notify(items):
+def post_ntfy(title, body, extra=None):
     """スマホへ通知を送る。ntfyのトピック名は金庫(GitHub Secret)から受け取る。"""
     if not NTFY_TOPIC:
         print("通知先が未設定のため、送信は省略しました(NTFY_TOPIC)")
         return
-    url = f"{NTFY_HOST}/{NTFY_TOPIC}"
-    common = {"Click": BOARD_URL, "Tags": "speech_balloon"}
+    h = {"Click": BOARD_URL, "Tags": "speech_balloon", "Title": title}
+    h.update(extra or {})
+    h = {k: v.encode("utf-8") for k, v in h.items()}
+    try:
+        requests.post(f"{NTFY_HOST}/{NTFY_TOPIC}", data=body.encode("utf-8"), headers=h, timeout=20).raise_for_status()
+    except Exception as e:
+        print("通知を送れませんでした:", type(e).__name__)
 
-    def post(title, body, extra=None):
-        h = {**common, "Title": title}
-        h.update(extra or {})
-        h = {k: v.encode("utf-8") for k, v in h.items()}
-        try:
-            requests.post(url, data=body.encode("utf-8"), headers=h, timeout=20).raise_for_status()
-        except Exception as e:
-            print("通知を送れませんでした:", type(e).__name__)
 
-    if len(items) > MAX_NOTIFY:
-        shops = {}
-        for x in items:
-            shops[x["shop"]] = shops.get(x["shop"], 0) + 1
-        post("姫デコチャットに新しい連絡", f"{len(items)}件 / " + "、".join(f"{k} {v}件" for k, v in shops.items()),
-             {"Priority": "high"})
-        return
-    for x in items:
-        hint = shift_hint(x["body"])
-        body = x["body"][:400]
-        if hint:
-            body += f"\n\n→ 出勤の返事かも: {hint}\n上げるなら「{x['name']} {hint} で上げて」とクロードに言ってください"
-        post(f'{x["shop"]} {x["name"]}', body, {"Tags": "calendar", "Priority": "high"} if hint else None)
+def notify_one(x, result=None):
+    r = x["read"]
+    body = x["body"][:300]
+    extra = None
+    if result is not None:
+        extra = {"Tags": "calendar", "Priority": "high"}
+        if result["ok"]:
+            body += f"\n\n✅ 出勤を上げました: {result['detail']}"
+            body += "\n本人に「上げました」と返信済み" if result["replied"] else \
+                    "\n！ 返信だけ失敗しました。本人に一言お願いします"
+        else:
+            body += f"\n\n✗ 自動で上げられませんでした: {result['detail']}\n→ 手で上げるか、クロードに「{x['name']} {r['hint']} で上げて」と言ってください"
+    elif r["status"] in ("unclear", "clear"):
+        extra = {"Tags": "calendar", "Priority": "high"}
+        why = r["reason"] if r["status"] == "unclear" else "自動上げが止めてある"
+        body += f"\n\n→ 出勤の返事かも: {r['hint']}\n（{why}ので自動では上げていません）"
+        body += f"\n上げるなら「{x['name']} ◯日 ◯時〜◯時 で上げて」とクロードに言ってください"
+    post_ntfy(f'{x["shop"]} {x["name"]}', body, extra)
 
 
 def main():
+    now = datetime.now(JST)
     prev = load_seen()
     first_run = prev is None
     seen = set() if first_run else set(prev)
 
-    fresh, all_ids, errors = [], set(), []
+    fresh, all_ids, errors, clis = [], set(), [], {}
     for shopdir, label in SHOPS.items():
         try:
-            items = pending_for_shop(shopdir)
+            cli, items = pending_for_shop(shopdir, now)
         except Exception as e:
             errors.append(f"{label}: {type(e).__name__}")
             continue
+        clis[shopdir] = cli
         for x in items:
             all_ids.add(x["id"])
             if x["id"] not in seen:
-                fresh.append({**x, "shop": label})
+                fresh.append({**x, "shop": label, "shopdir": shopdir})
         print(f"{label}: 返事待ち {len(items)}件")
 
     if errors:
         print("確認できなかった店:", " / ".join(errors))
 
-    # 見られなかった店の分を消してしまわないよう、前回の記録も残したまま足す
-    save_seen(all_ids | seen)
-
     if first_run:
+        save_seen(all_ids)
         print(f"初回のため、いまの{len(all_ids)}件は通知せずに記録しました(ここから先の新しい連絡だけ通知します)")
         return
     if not fresh:
+        save_seen(all_ids | seen)
         print("新しい連絡はありません")
         return
+
     fresh.sort(key=lambda x: x["at"])
-    print(f"新しい連絡 {len(fresh)}件 → 通知します")
-    notify(fresh)
+    for x in fresh:
+        x["read"] = read_shift_reply(x["body"], now.replace(tzinfo=None))
+    n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
+    print(f"新しい連絡 {len(fresh)}件（うち出勤の返事で条件なし {n_clear}件）→ " + ("上げて通知します" if SHIFT_AUTO else "通知します（自動上げは止めてある）"))
+
+    many = len(fresh) > MAX_NOTIFY
+    if many:
+        shops = {}
+        for x in fresh:
+            shops[x["shop"]] = shops.get(x["shop"], 0) + 1
+        post_ntfy("姫デコチャットに新しい連絡", f"{len(fresh)}件 / " + "、".join(f"{k} {v}件" for k, v in shops.items()),
+                  {"Priority": "high"})
+
+    # 手をつけた順に記録して、途中で止まっても同じ連絡を二度扱わない
+    base = set(seen)
+    for x in fresh:
+        try:
+            if SHIFT_AUTO and x["read"]["status"] == "clear":
+                import shift_auto
+                res = shift_auto.handle(clis.get(x["shopdir"]), x["shopdir"], x["shop"], x["gid"], x["name"],
+                                        x["read"]["shifts"], now)
+                notify_one(x, res)
+            elif not many:
+                notify_one(x)
+        except Exception as e:
+            print(f"{x['shop']}: 扱えませんでした {type(e).__name__}")
+            try:
+                post_ntfy(f'{x["shop"]} {x["name"]}', x["body"][:300] + f"\n\n！ 自動の処理で失敗（{type(e).__name__}）。手で確認してください",
+                          {"Priority": "high"})
+            except Exception:
+                pass
+        base.add(x["id"])
+        save_seen(base)
+    save_seen(base | all_ids)
 
 
 if __name__ == "__main__":

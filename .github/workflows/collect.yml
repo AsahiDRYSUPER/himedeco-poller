@@ -21,18 +21,23 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 62
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests beautifulsoup4 cryptography
+      - run: pip install requests beautifulsoup4 cryptography playwright
+      - name: ブラウザを用意する（出勤の返事をそのまま上げる時に使う）
+        run: python3 -m playwright install --with-deps chromium
+      - name: 出勤の返事の読み方が壊れていないか
+        run: python3 test_shift_reply.py
       - name: Collect
         env:
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SHIFT_AUTO: ${{ vars.SHIFT_AUTO }}
           CASTS_MAP: ${{ secrets.CASTS_MAP }}
           TODO_KEY: ${{ secrets.TODO_KEY }}
           GH_TOKEN: ${{ github.token }}

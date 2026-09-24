@@ -1,0 +1,24 @@
+name: selftest
+
+# 出勤の自動上げの部品が動くかを確かめる（書き込みはしない）。手で起動した時だけ動く。
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests beautifulsoup4 cryptography playwright
+      - run: python3 -m playwright install --with-deps chromium
+      - name: 返事の読み方
+        run: python3 test_shift_reply.py
+      - name: ブラウザでログインして出勤登録の画面が開けるか
+        env:
+          CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
+        run: python3 shift_auto.py --selftest s_matikado

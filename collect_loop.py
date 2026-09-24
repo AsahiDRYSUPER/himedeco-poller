@@ -20,7 +20,7 @@ while True:
     r = subprocess.run([sys.executable, "collect_shops.py"])
     # 姫デコチャットの見張り(新しい連絡があればスマホへ通知)。ここで失敗しても、ボードのデータ更新は止めない
     try:
-        subprocess.run([sys.executable, "watch_chat.py"], timeout=240)
+        subprocess.run([sys.executable, "watch_chat.py"], timeout=900)   # 出勤を上げる時はブラウザ操作で数分かかる
     except Exception as e:
         print("姫デコチャットの見張りに失敗:", type(e).__name__)
     if r.returncode == 0:
