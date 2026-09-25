@@ -18,6 +18,10 @@
 
 止めたい時: リポジトリの変数 SHIFT_AUTO を off にすると、上げずに通知だけに戻る。
 
+お礼・了解だけの連絡は返さない。出勤の話で日にちか時間が足りない連絡には
+「出られそうな日と時間が決まったら教えてください」と返す（reply_rules.py）。質問や事情は返さず、人に見せる。
+止めたい時はリポジトリの変数 AUTO_REPLY を off。
+
 裏姫デコの依頼（「裏姫デコほしい」）も、ここで見つける。見つけたら非公開の cast-mypage の仕組みを起動して、
 ページを作って本人に送ってもらう（cast_mypage.py。鍵が無ければ通知だけ）。
 
@@ -37,6 +41,7 @@ from bs4 import BeautifulSoup
 from heaven_http import BASE, HeavenClient, LoginError, load_credentials
 from shift_reply import read_shift_reply
 import cast_mypage
+import reply_rules
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
@@ -58,6 +63,8 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
 SHIFT_AUTO = os.environ.get("SHIFT_AUTO", "on").strip().lower() not in ("off", "0", "false", "no")
 URAHIME_WORDS = ("裏姫デコ", "うら姫デコ", "ウラ姫デコ", "裏ひめデコ", "裏姫でこ", "裏姫ﾃﾞｺ")
+AUTO_REPLY = os.environ.get("AUTO_REPLY", "on").strip().lower() not in ("off", "0", "false", "no")
+WAIT_MIN = 10                   # 続けて送ってくる途中で返さないよう、最後の発言からこの分数は待つ
 
 
 def clean_name(name: str) -> str:
@@ -138,6 +145,7 @@ def pending_for_shop(shopdir: str, now):
             if m.get("sent_from_flg") != 2:
                 break
             run.append(m)
+        prev_shop = clean(talks[-len(run) - 1].get("body")) if len(talks) > len(run) else ""
         run.reverse()
         last = run[-1]
         run = [m for m in run if (when(m) or now) >= cut][-5:] or [last]
@@ -145,7 +153,7 @@ def pending_for_shop(shopdir: str, now):
         if not body:
             continue
         out.append({"id": int(last.get("id") or 0), "gid": gid, "name": name,
-                    "at": str(last.get("create_date") or ""), "body": body})
+                    "at": str(last.get("create_date") or ""), "body": body, "prev_shop": prev_shop[:80]})
     return cli, out
 
 
@@ -163,11 +171,23 @@ def post_ntfy(title, body, extra=None):
         print("通知を送れませんでした:", type(e).__name__)
 
 
-def notify_one(x, result=None, urahime=None):
+def notify_one(x, result=None, urahime=None, auto=None):
     r = x["read"]
     body = x["body"][:300]
     extra = None
-    if urahime is not None:
+    if auto is not None:
+        what, ok = auto
+        if what == "ask":
+            body += ("\n\n→ 日にち・時間がまだなので「" + reply_rules.ASK_TEXT + "」と自動で返しました") if ok else \
+                    "\n\n！ 自動の返事が送れませんでした。手で返してください"
+            extra = {"Tags": "calendar"} if ok else {"Tags": "warning", "Priority": "high"}
+        elif what == "thanks":
+            body += "\n\n（お礼・了解のみ。返信は不要と判断）"
+            extra = {"Priority": "low"}
+        elif what == "need":
+            body += "\n\n→ 要返信（自動では返していません）"
+            extra = {"Priority": "high"}
+    elif urahime is not None:
         ok, msg = urahime
         extra = {"Tags": "sparkles", "Priority": "high"}
         body += "\n\n→ 裏姫デコの依頼。" + ("作成を起動しました（15分ほどで本人に届きます）" if ok else
@@ -225,6 +245,8 @@ def main():
         x["read"] = read_shift_reply(x["body"], now.replace(tzinfo=None))
     for x in fresh:
         x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS)
+        x["kind"] = "urahime" if x["urahime"] else (
+            "clear" if x["read"]["status"] == "clear" else reply_rules.classify(x["body"], now.replace(tzinfo=None)))
     n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
     n_ura = sum(1 for x in fresh if x["urahime"])
     print(f"新しい連絡 {len(fresh)}件（うち出勤の返事で条件なし {n_clear}件、裏姫デコの依頼 {n_ura}件）→ "
@@ -244,17 +266,35 @@ def main():
 
     # 手をつけた順に記録して、途中で止まっても同じ連絡を二度扱わない
     base = set(seen)
+    deferred = set()
     for x in fresh:
+        kind = x["kind"]
         try:
-            if x["urahime"]:
+            if kind == "urahime":
                 notify_one(x, urahime=urahime)
-            elif SHIFT_AUTO and x["read"]["status"] == "clear":
+            elif kind == "clear" and SHIFT_AUTO:
                 import shift_auto
                 res = shift_auto.handle(clis.get(x["shopdir"]), x["shopdir"], x["shop"], x["gid"], x["name"],
                                         x["read"]["shifts"], now)
                 notify_one(x, res)
+            elif kind == "ask_when" and AUTO_REPLY:
+                age = now - (when({"create_date": x["at"]}) or now)
+                if age < timedelta(minutes=WAIT_MIN):
+                    deferred.add(x["id"])          # 続きが来るかもしれないので次の回に回す
+                    continue
+                cli = clis.get(x["shopdir"])
+                if "決まったら教えてください" in x.get("prev_shop", "") or cli is None:
+                    notify_one(x, auto=("need", False))   # 二度は同じ文を返さない
+                else:
+                    import shift_auto
+                    ok = shift_auto.reply(cli, x["shopdir"], x["gid"], reply_rules.ask_text(shift_auto.yobi(x["name"])))
+                    print(f'{x["shop"]}: 日にち・時間を聞く返事を自動送信 {"OK" if ok else "NG"}')
+                    notify_one(x, auto=("ask", ok))
+            elif kind == "thanks":
+                if not many:
+                    notify_one(x, auto=("thanks", True))
             elif not many:
-                notify_one(x)
+                notify_one(x, auto=("need", False))
         except Exception as e:
             print(f"{x['shop']}: 扱えませんでした {type(e).__name__}")
             try:
@@ -264,7 +304,7 @@ def main():
                 pass
         base.add(x["id"])
         save_seen(base)
-    save_seen(base | all_ids)
+    save_seen((base | all_ids) - deferred)
 
 
 if __name__ == "__main__":
