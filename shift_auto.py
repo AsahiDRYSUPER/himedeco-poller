@@ -184,9 +184,9 @@ def yobi(name):
     return n if n.endswith("さん") else n + "さん"
 
 
-def reply_text(name, shifts):
+def reply_text(name, shifts, extra=""):
     parts = [f"{d.day}日 {s}〜{e}" for d, s, e in shifts]
-    return f"{yobi(name)}、ありがとう！ {'・'.join(parts)}で上げておいたよ🙌 当日よろしくね😊"
+    return f"{yobi(name)}、ありがとう！ {'・'.join(parts)}で上げておいたよ🙌 当日よろしくね😊" + (f"\n{extra}" if extra else "")
 
 
 def clean(t):
@@ -215,8 +215,9 @@ def reply(cli, shopdir, gid, text):
     return clean(text)[:20] in clean(last.get("body"))
 
 
-def handle(cli, shopdir, label, gid, name, shifts, now=None):
-    """上げる → 「次回◯日出勤！」 → 本人に返す。返す: {"ok", "replied", "detail"}"""
+def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply=""):
+    """上げる → 「次回◯日出勤！」 → 本人に返す。返す: {"ok", "replied", "detail"}
+    extra_reply: 返事の最後に足す一言（個室・迎えなど、人が対応する件がある時）"""
     now = now or datetime.now(JST)
     results = upload(shopdir, gid, name, shifts, now.date())
     parts, all_ok = [], True
@@ -228,7 +229,7 @@ def handle(cli, shopdir, label, gid, name, shifts, now=None):
     replied = False
     if all_ok and cli is not None:
         try:
-            replied = reply(cli, shopdir, gid, reply_text(name, shifts))
+            replied = reply(cli, shopdir, gid, reply_text(name, shifts, extra_reply))
         except Exception as ex:
             print(f"  {label} {gid}: 返信で {type(ex).__name__}")
         print(f"  {label} {gid}: 返信 {'OK' if replied else 'NG'}")

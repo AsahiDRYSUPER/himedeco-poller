@@ -64,6 +64,9 @@ NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
 SHIFT_AUTO = os.environ.get("SHIFT_AUTO", "on").strip().lower() not in ("off", "0", "false", "no")
 URAHIME_WORDS = ("裏姫デコ", "うら姫デコ", "ウラ姫デコ", "裏ひめデコ", "裏姫でこ", "裏姫ﾃﾞｺ")
 AUTO_REPLY = os.environ.get("AUTO_REPLY", "on").strip().lower() not in ("off", "0", "false", "no")
+# 個室・迎えなど、出勤を上げるだけでは終わらない頼みごと。人（一希さん）が対応する（2026-09-25 の指摘）
+LOGISTICS_WORDS = ("個室", "迎え", "送迎", "待機場所", "ホテル待機", "寮", "出張")
+LOGISTICS_REPLY = "個室・迎えの件は確認して連絡するね！"
 WAIT_MIN = 10                   # 続けて送ってくる途中で返さないよう、最後の発言からこの分数は待つ
 
 
@@ -175,6 +178,8 @@ def notify_one(x, result=None, urahime=None, auto=None):
     r = x["read"]
     body = x["body"][:300]
     extra = None
+    if x.get("logistics"):
+        body += "\n\n！ 個室・迎えなどの頼みごとが入っています → 要対応（出勤以外は自動では処理していません）"
     if auto is not None:
         what, ok = auto
         if what == "ask":
@@ -205,6 +210,8 @@ def notify_one(x, result=None, urahime=None, auto=None):
         why = r["reason"] if r["status"] == "unclear" else "自動上げが止めてある"
         body += f"\n\n→ 出勤の返事かも: {r['hint']}\n（{why}ので自動では上げていません）"
         body += f"\n上げるなら「{x['name']} ◯日 ◯時〜◯時 で上げて」とクロードに言ってください"
+    if x.get("logistics"):
+        extra = {**(extra or {}), "Priority": "urgent", "Tags": "house"}
     post_ntfy(f'{x["shop"]} {x["name"]}', body, extra)
 
 
@@ -247,6 +254,9 @@ def main():
         x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS)
         x["kind"] = "urahime" if x["urahime"] else (
             "clear" if x["read"]["status"] == "clear" else reply_rules.classify(x["body"], now.replace(tzinfo=None)))
+        x["logistics"] = any(w in x["body"] for w in LOGISTICS_WORDS)
+        if x["logistics"] and x["kind"] in ("ask_when", "thanks"):
+            x["kind"] = "other"            # 頼みごとが混ざっていたら、自動では返さず人に見せる
     n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
     n_ura = sum(1 for x in fresh if x["urahime"])
     print(f"新しい連絡 {len(fresh)}件（うち出勤の返事で条件なし {n_clear}件、裏姫デコの依頼 {n_ura}件）→ "
@@ -275,7 +285,8 @@ def main():
             elif kind == "clear" and SHIFT_AUTO:
                 import shift_auto
                 res = shift_auto.handle(clis.get(x["shopdir"]), x["shopdir"], x["shop"], x["gid"], x["name"],
-                                        x["read"]["shifts"], now)
+                                        x["read"]["shifts"], now,
+                                        extra_reply=LOGISTICS_REPLY if x["logistics"] else "")
                 notify_one(x, res)
             elif kind == "ask_when" and AUTO_REPLY:
                 age = now - (when({"create_date": x["at"]}) or now)
