@@ -181,6 +181,7 @@ def upload(shopdir, gid, name, shifts, today):
 def yobi(name):
     """呼びかけに使う名前。「二階堂さん」のように「さん」で終わる源氏名は、重ねない。"""
     n = re.sub(r"[\[【(（].*?[\]】)）]", "", name or "").strip()
+    n = re.sub(r"(?<=[ぁ-んァ-ヶー一-龠])(RSP|RS|SP)$", "", n)   # とろ〜りの「RS」「RSP」は肩書きなので外す
     return n if n.endswith("さん") else n + "さん"
 
 
