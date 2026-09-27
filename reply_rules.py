@@ -37,7 +37,7 @@ def _core(t):
     return re.sub(r"[^\w぀-ヿ一-鿿]+", "", t)
 
 
-def classify(body, now=None):
+def classify(body, now=None, shop=None):
     t = (body or "").strip()
     if not t:
         return "other"
@@ -46,8 +46,8 @@ def classify(body, now=None):
     core = _core(t)
     if core and THANKS_RE.match(core):
         return "thanks"
-    r = read_shift_reply(t, now)
-    if r["status"] == "clear":
+    r = read_shift_reply(t, now, shop)
+    if r["status"] in ("clear", "partial"):
         return "clear"
     if any(w in t for w in NEG) or any(w in t for w in NEG2):
         return "other"

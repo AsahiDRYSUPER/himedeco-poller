@@ -81,6 +81,14 @@ def clean(t):
     return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", str(t or ""))).strip()
 
 
+def clean_lines(t):
+    """改行を残して掃除する（「28日 19-23」「30日 未定」のように行ごとに書く子がいるため）。"""
+    t = re.sub(r"<br\s*/?>", "\n", str(t or ""), flags=re.I)
+    t = re.sub(r"<[^>]*>", " ", t)
+    t = re.sub(r"[ \t\u3000]+", " ", t)
+    return re.sub(r"\s*\n\s*", "\n", t).strip()
+
+
 def when(m):
     try:
         return datetime.strptime(str(m.get("create_date") or ""), "%Y/%m/%d %H:%M:%S").replace(tzinfo=JST)
@@ -155,10 +163,11 @@ def pending_for_shop(shopdir: str, now):
         last = run[-1]
         run = [m for m in run if (when(m) or now) >= cut][-5:] or [last]
         body = " / ".join(b for b in (clean(m.get("body")) for m in run) if b)
+        raw = " / ".join(b for b in (clean_lines(m.get("body")) for m in run) if b)   # 改行を残した形（読み分け用）
         if not body:
             continue
         out.append({"id": int(last.get("id") or 0), "gid": gid, "name": name,
-                    "at": str(last.get("create_date") or ""), "body": body, "prev_shop": prev_shop[:80]})
+                    "at": str(last.get("create_date") or ""), "body": body, "raw": raw, "prev_shop": prev_shop[:80]})
     return cli, out
 
 
@@ -254,11 +263,12 @@ def main():
 
     fresh.sort(key=lambda x: x["at"])
     for x in fresh:
-        x["read"] = read_shift_reply(x["body"], now.replace(tzinfo=None))
+        x["read"] = read_shift_reply(x.get("raw") or x["body"], now.replace(tzinfo=None), x["shopdir"])
     for x in fresh:
         x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS) and x["gid"] not in NO_AUTO
         x["kind"] = "urahime" if x["urahime"] else (
-            "clear" if x["read"]["status"] == "clear" else reply_rules.classify(x["body"], now.replace(tzinfo=None)))
+            "clear" if x["read"]["status"] in ("clear", "partial") else
+            reply_rules.classify(x.get("raw") or x["body"], now.replace(tzinfo=None), x["shopdir"]))
         x["logistics"] = any(w in x["body"] for w in LOGISTICS_WORDS)
         if x["gid"] in NO_AUTO:
             x["kind"] = "hold"             # 自動では何もしない（出勤も上げない・返事もしない）
@@ -295,6 +305,7 @@ def main():
                 import shift_auto
                 res = shift_auto.handle(clis.get(x["shopdir"]), x["shopdir"], x["shop"], x["gid"], x["name"],
                                         x["read"]["shifts"], now,
+                                        tentative=x["read"].get("tentative", ()), display=x["read"].get("display"),
                                         extra_reply="")   # 個室・迎えのことは返事に書かない（一希さん 9/27）。通知で人が対応する
                 notify_one(x, res)
             elif kind == "ask_when" and AUTO_REPLY:

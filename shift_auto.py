@@ -78,6 +78,11 @@ def goto_cell(page, shopdir, gid, ymd, name=""):
                   f"&serach_girls_name={quote(name)}&basedate={ymd}", wait_until="domcontentloaded")
         if page.locator(f"#msgbox_{gid}_{ymd}").count():
             return True
+    # 一覧で出ない先の日（2週間より先）は、その子の月の画面から開く
+    page.goto(f"{BASE}/C9ShukkinShiftMonthlyGirl.php?shopdir={shopdir}&girlsid={gid}&basedate={ymd[:6]}01",
+              wait_until="domcontentloaded")
+    if page.locator(f"#msgbox_{gid}_{ymd}").count():
+        return True
     return False
 
 
@@ -169,10 +174,12 @@ def fill_next(page, shopdir, gid, name, shift_ymd, today_ymd):
     return text, done, skipped
 
 
-def upload(shopdir, gid, name, shifts, today):
-    """shifts: [(date, "12:00", "20:00")] → [(date, ok, msg, fill)]"""
+def upload(shopdir, gid, name, shifts, today, tentative=()):
+    """shifts: [(date, "12:00", "20:00")] → ([(date, ok, msg, fill)], [(date, ok, msg)])
+    tentative: 未定の日。先に備考へ「オキニトークでご確認ください。」を入れる（その日は「次回◯日」で上書きされない）"""
     from playwright.sync_api import sync_playwright
-    out = []
+    from shift_reply import NOTE_TENTATIVE
+    out, notes = [], []
     today_ymd = today.strftime("%Y%m%d")
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -180,7 +187,15 @@ def upload(shopdir, gid, name, shifts, today):
         page = ctx.new_page()
         try:
             if not login(page, shopdir):
-                return [(d, False, "ログインできませんでした", "") for d, _, _ in shifts]
+                return ([(d, False, "ログインできませんでした", "") for d, _, _ in shifts],
+                        [(d, False, "ログインできませんでした") for d in tentative])
+            for d in sorted(set(tentative)):
+                try:
+                    ok, msg = open_one(page, shopdir, gid, d.strftime("%Y%m%d"), "", "", note=NOTE_TENTATIVE,
+                                       name=name, want_text=NOTE_TENTATIVE)
+                except Exception as ex:
+                    ok, msg = False, type(ex).__name__
+                notes.append((d, ok, msg))
             for d, s, e in sorted(shifts):
                 ymd = d.strftime("%Y%m%d")
                 fill = ""
@@ -195,7 +210,7 @@ def upload(shopdir, gid, name, shifts, today):
         finally:
             ctx.close()
             browser.close()
-    return out
+    return out, notes
 
 
 def yobi(name):
@@ -205,9 +220,10 @@ def yobi(name):
     return n if n.endswith("さん") else n + "さん"
 
 
-def reply_text(name, shifts, extra=""):
-    parts = [f"{d.day}日 {s}〜{e}" for d, s, e in shifts]
-    return f"{yobi(name)}、ありがとう！ {'・'.join(parts)}で上げておいたよ🙌 当日よろしくね😊" + (f"\n{extra}" if extra else "")
+def reply_text(name, shifts, extra="", tentative=(), display=None):
+    parts = list(display) if display else [f"{d.day}日 {s}〜{e}" for d, s, e in shifts]
+    tail = (f"{'・'.join(f'{d.day}日' for d in sorted(set(tentative)))}は決まったら教えてね😊" if tentative else "当日よろしくね😊")
+    return f"{yobi(name)}、ありがとう！ {'・'.join(parts)}で上げておいたよ🙌 {tail}" + (f"\n{extra}" if extra else "")
 
 
 def clean(t):
@@ -236,12 +252,15 @@ def reply(cli, shopdir, gid, text):
     return clean(text)[:20] in clean(last.get("body"))
 
 
-def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply=""):
+def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply="", tentative=(), display=None):
     """上げる → 「次回◯日出勤！」 → 本人に返す。返す: {"ok", "replied", "detail"}
     extra_reply: 返事の最後に足す一言（個室・迎えなど、人が対応する件がある時）"""
     now = now or datetime.now(JST)
-    results = upload(shopdir, gid, name, shifts, now.date())
+    results, notes = upload(shopdir, gid, name, shifts, now.date(), tentative)
     parts, all_ok = [], True
+    for d, ok, msg in notes:
+        parts.append(f"{d.day}日は未定→備考 {'✅' if ok else '✗ ' + msg}")
+        print(f"  {label} {gid} {d.month}/{d.day} 備考（未定）: {'OK' if ok else 'NG'} {msg}")
     for d, ok, msg, fill in results:
         all_ok = all_ok and ok
         s, e = next((s, e) for dd, s, e in shifts if dd == d)
@@ -250,7 +269,7 @@ def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply=""):
     replied = False
     if all_ok and cli is not None:
         try:
-            replied = reply(cli, shopdir, gid, reply_text(name, shifts, extra_reply))
+            replied = reply(cli, shopdir, gid, reply_text(name, shifts, extra_reply, tentative, display))
         except Exception as ex:
             print(f"  {label} {gid}: 返信で {type(ex).__name__}")
         print(f"  {label} {gid}: 返信 {'OK' if replied else 'NG'}")
