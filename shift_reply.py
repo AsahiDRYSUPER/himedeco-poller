@@ -20,8 +20,9 @@ MAX_AHEAD_DAYS = 40      # これより先の日は、見間違いの可能性�
 MAX_LEN = 300            # 長すぎる文は事情が混ざっているので人に見せる
 MIN_HOURS, MAX_HOURS = 1, 17
 NOTE_TENTATIVE = "オキニトークでご確認ください。"   # 未定の日の備考（一希さん 2026-09-27）
-# 店ごとの「ラスト」（最後の時間）。出勤表の実績でいちばん遅い終わり（2026-09-27 確認）。無い店は人に回す
-LAST = {"cg_kirakira": (27, 0), "potya_reen": (27, 0)}
+# 「ラスト」は全店共通：月〜土は27時（翌3時）、日曜だけ25時（翌1時）（一希さん 2026-09-27）
+LAST_WEEKDAY, LAST_SUNDAY = 27, 25
+_LAST_MARK = 99          # 読み分けの途中で「ラスト」を表す印（日にちが決まってから曜日で時間に直す）
 
 # その日を「休み・出ない」にする言葉
 NEG = ("出れない", "出られない", "出勤できない", "出勤できません", "行けない", "いけない", "無理", "むずかしい", "難しい",
@@ -58,9 +59,7 @@ def _norm(t, shop=None):
     t = _DASH.sub("〜", t)
     # 「16時〜0時 10月2日」の「0時 10」を「0時10分」と読まないよう、時のあとに空白＋数字（分が付かない）が来たら区切る
     t = re.sub(r"時\s+(?=\d{1,2}(?!\d)(?!\s*分))", "時、", t)
-    if shop in LAST:
-        h, m = LAST[shop]
-        t = LAST_WORDS.sub(lambda mm: f"{mm.group(1)}〜{h}時" + (f"{m}分" if m else ""), t)
+    t = LAST_WORDS.sub(lambda mm: f"{mm.group(1)}〜{_LAST_MARK}時", t)
     return t
 
 
@@ -211,7 +210,6 @@ def read_shift_reply(body, now=None, shop=None):
         return result("unclear", "日にちの無い所に「休み」などがある")
 
     clear, tentative, declined, display, incomplete = [], [], [], [], []
-    last_hm = LAST.get(shop)
     for g in groups:
         for d in g["days"]:
             if not isinstance(d, date):
@@ -230,19 +228,24 @@ def read_shift_reply(body, now=None, shop=None):
             continue
         h1, m1 = _hm(*g["range"][:4])
         h2, m2 = _hm(*g["range"][4:])
-        if m1 not in (0, 30) or m2 not in (0, 30):
-            return result("unclear", "分が00か30でない")
-        if h1 > 23 or h2 > 29:
-            return result("unclear", "時間が読めない")
-        end = h2 + 24 if (h2 <= h1 and h2 <= 9) else h2
-        if not MIN_HOURS <= (end - h1) + (m2 - m1) / 60 <= MAX_HOURS:
-            return result("unclear", "時間の長さが変")
-        e_disp = "ラスト" if (last_hm and (end, m2) == last_hm and re.search(r"ラスト|らすと|最後まで|閉店まで", raw)) else _fmt(end, m2)
+        is_last = (h2 == _LAST_MARK)
         for d in g["days"]:
+            if is_last:
+                end, em = (LAST_SUNDAY if d.weekday() == 6 else LAST_WEEKDAY), 0
+            else:
+                if m1 not in (0, 30) or m2 not in (0, 30):
+                    return result("unclear", "分が00か30でない")
+                if h1 > 23 or h2 > 29:
+                    return result("unclear", "時間が読めない")
+                end, em = (h2 + 24 if (h2 <= h1 and h2 <= 9) else h2), m2
+            if m1 not in (0, 30) or h1 > 23:
+                return result("unclear", "時間が読めない")
+            if not MIN_HOURS <= (end - h1) + (em - m1) / 60 <= MAX_HOURS:
+                return result("unclear", "時間の長さが変")
             if d == today and h1 <= now.hour:
                 return result("unclear", "今日の、もう始まっている時間")
-            clear.append((d, _fmt(h1, m1), _fmt(end, m2)))
-            display.append((d, f"{d.day}日 {_fmt(h1, m1)}〜{e_disp}"))
+            clear.append((d, _fmt(h1, m1), _fmt(end, em)))
+            display.append((d, f"{d.day}日 {_fmt(h1, m1)}〜{'ラスト' if is_last else _fmt(end, em)}"))
 
     days_clear = [d for d, _, _ in clear]
     if len(days_clear) != len(set(days_clear)):
