@@ -22,7 +22,8 @@ HEDGE = ("かも", "たぶん", "多分", "できれば", "出来れば", "も�
          "わかりません", "迷って", "悩んで", "考え", "検討", "くらい", "ぐらい", "頃", "ごろ", "以降", "前後",
          "ラスト", "らすと", "最後まで", "閉店", "午前", "午後", "あれば", "なければ", "もし", "場合", "相談",
          "どちら", "どっち", "いずれ", "または", "もしくは", "体調", "様子", "調整", "決まったら",
-         "後で", "あとで", "また連絡", "ですか", "ますか", "でしょうか", "かな", "？", "?")
+         "後で", "あとで", "また連絡", "ですか", "ますか", "でしょうか", "かな", "？", "?",
+         "変更", "変えて", "ずらし", "代わり", "かわり", "やっぱり")
 HEDGE_RE = (re.compile(r"日か(?!ら)"), re.compile(r"時か(?!ら)"))   # 「26日か27日」「15時か18時」
 
 _Z2H = str.maketrans("０１２３４５６７８９：／", "0123456789:/")
@@ -36,6 +37,8 @@ DAYS = re.compile(r"(?<!\d)((?:\d{1,2}\s*[、,.・と]\s*)*\d{1,2})\s*日(?![間
 REL = re.compile(r"今日|本日|明日|あした|明後日|あさって")
 _REL_N = {"今日": 0, "本日": 0, "明日": 1, "あした": 1, "明後日": 2, "あさって": 2}
 DAY_RANGE = re.compile(r"\d\s*日?\s*[〜]\s*\d{1,2}\s*日")   # 「26〜28日」「26日〜28日」
+# 「29、30、2、3、4 10時から15時」のように、日を付けずに日にちを並べて、すぐ時間が続く形
+BARE_LIST = re.compile(r"(?<![\d:])(\d{1,2}(?:\s*[、,・]\s*\d{1,2})+)(?=\s+\d{1,2}\s*(?:時|:))")
 
 
 def _norm(t):
@@ -49,6 +52,9 @@ def _tokens(t):
     for m in MD.finditer(t):
         found.append((m.start(), m.end(), 0, "md", (int(m.group(1)), int(m.group(2)))))
     for m in DAYS.finditer(t):
+        days = [int(x) for x in re.findall(r"\d{1,2}", m.group(1))]
+        found.append((m.start(), m.end(), 1, "days", days))
+    for m in BARE_LIST.finditer(t):
         days = [int(x) for x in re.findall(r"\d{1,2}", m.group(1))]
         found.append((m.start(), m.end(), 1, "days", days))
     for m in REL.finditer(t):

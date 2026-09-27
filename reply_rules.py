@@ -53,8 +53,7 @@ def classify(body, now=None):
         return "other"
     if len(t) > 80:
         return "other"
-    if r["status"] == "unclear" and r["reason"] in ASK_REASONS:
-        return "ask_when"
+    # 日にちや時間が少しでも書いてあるもの（unclear）は、読み違いを避けるため自動で聞き返さない（2026-09-27 つくしさんの件）
     if r["status"] == "none" and any(w in t for w in SHIFT_WORDS):
         return "ask_when"
     return "other"

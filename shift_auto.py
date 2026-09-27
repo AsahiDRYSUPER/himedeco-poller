@@ -130,9 +130,23 @@ def fill_next(page, shopdir, gid, name, shift_ymd, today_ymd):
     t = date(int(today_ymd[:4]), int(today_ymd[4:6]), int(today_ymd[6:]))
     text = f"次回{d.day}日出勤！"
     done, skipped = [], []
+    def ref_date(cell_day, n):
+        for add in range(3):
+            mm = cell_day.month + add
+            yy = cell_day.year + (mm - 1) // 12
+            mm = (mm - 1) % 12 + 1
+            try:
+                x = date(yy, mm, n)
+            except ValueError:
+                continue
+            if x >= cell_day:
+                return x
+        return None
+
     cur = t
     while cur < d:
         ymd = cur.strftime("%Y%m%d")
+        cell_day = cur
         cur += timedelta(days=1)
         if not goto_cell(page, shopdir, gid, ymd, name):
             skipped.append(f"{int(ymd[4:6])}/{int(ymd[6:])}")
@@ -144,6 +158,12 @@ def fill_next(page, shopdir, gid, name, shift_ymd, today_ymd):
         if before.startswith(text):
             done.append(f"{int(ymd[4:6])}/{int(ymd[6:])}")
             continue
+        m = re.match(r"次回(\d{1,2})日", before or "")
+        if m:
+            r = ref_date(cell_day, int(m.group(1)))
+            if r is not None and r < d:
+                skipped.append(f"{int(ymd[4:6])}/{int(ymd[6:])}")
+                continue
         ok, _ = open_one(page, shopdir, gid, ymd, "", "", note=text, name=name, want_text=text)
         (done if ok else skipped).append(f"{int(ymd[4:6])}/{int(ymd[6:])}")
     return text, done, skipped
