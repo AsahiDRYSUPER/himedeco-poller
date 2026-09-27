@@ -67,6 +67,8 @@ AUTO_REPLY = os.environ.get("AUTO_REPLY", "on").strip().lower() not in ("off", "
 # 個室・迎えなど、出勤を上げるだけでは終わらない頼みごと。人（一希さん）が対応する（2026-09-25 の指摘）
 LOGISTICS_WORDS = ("個室", "迎え", "送迎", "待機場所", "ホテル待機", "寮", "出張")
 LOGISTICS_REPLY = "個室・迎えの件は確認して連絡するね！"
+# 一希さんが返し方を決める子（キャストID、金庫 NO_AUTO_IDS にカンマ区切り）。この子には何も自動で送らず、通知だけ
+NO_AUTO = {int(x) for x in os.environ.get("NO_AUTO_IDS", "").replace(" ", "").split(",") if x.isdigit()}
 WAIT_MIN = 10                   # 続けて送ってくる途中で返さないよう、最後の発言からこの分数は待つ
 
 
@@ -189,6 +191,9 @@ def notify_one(x, result=None, urahime=None, auto=None):
         elif what == "thanks":
             body += "\n\n（お礼・了解のみ。返信は不要と判断）"
             extra = {"Priority": "low"}
+        elif what == "hold":
+            body += "\n\n→ 要返信（この子は返し方を一希さんが決める子。自動では何も送っていません）"
+            extra = {"Priority": "high"}
         elif what == "need":
             body += "\n\n→ 要返信（自動では返していません）"
             extra = {"Priority": "high"}
@@ -251,10 +256,12 @@ def main():
     for x in fresh:
         x["read"] = read_shift_reply(x["body"], now.replace(tzinfo=None))
     for x in fresh:
-        x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS)
+        x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS) and x["gid"] not in NO_AUTO
         x["kind"] = "urahime" if x["urahime"] else (
             "clear" if x["read"]["status"] == "clear" else reply_rules.classify(x["body"], now.replace(tzinfo=None)))
         x["logistics"] = any(w in x["body"] for w in LOGISTICS_WORDS)
+        if x["gid"] in NO_AUTO:
+            x["kind"] = "hold"             # 自動では何もしない（出勤も上げない・返事もしない）
         if x["logistics"] and x["kind"] in ("ask_when", "thanks"):
             x["kind"] = "other"            # 頼みごとが混ざっていたら、自動では返さず人に見せる
     n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
@@ -280,7 +287,9 @@ def main():
     for x in fresh:
         kind = x["kind"]
         try:
-            if kind == "urahime":
+            if kind == "hold":
+                notify_one(x, auto=("hold", False))
+            elif kind == "urahime":
                 notify_one(x, urahime=urahime)
             elif kind == "clear" and SHIFT_AUTO:
                 import shift_auto

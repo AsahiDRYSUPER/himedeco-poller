@@ -39,6 +39,7 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           SHIFT_AUTO: ${{ vars.SHIFT_AUTO }}
           AUTO_REPLY: ${{ vars.AUTO_REPLY }}
+          NO_AUTO_IDS: ${{ secrets.NO_AUTO_IDS }}
           CAST_MYPAGE_TOKEN: ${{ secrets.CAST_MYPAGE_TOKEN }}
           CASTS_MAP: ${{ secrets.CASTS_MAP }}
           TODO_KEY: ${{ secrets.TODO_KEY }}
