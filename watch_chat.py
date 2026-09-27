@@ -295,7 +295,7 @@ def main():
                 import shift_auto
                 res = shift_auto.handle(clis.get(x["shopdir"]), x["shopdir"], x["shop"], x["gid"], x["name"],
                                         x["read"]["shifts"], now,
-                                        extra_reply=LOGISTICS_REPLY if x["logistics"] else "")
+                                        extra_reply="")   # 個室・迎えのことは返事に書かない（一希さん 9/27）。通知で人が対応する
                 notify_one(x, res)
             elif kind == "ask_when" and AUTO_REPLY:
                 age = now - (when({"create_date": x["at"]}) or now)
