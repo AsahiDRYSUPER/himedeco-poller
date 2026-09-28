@@ -4,8 +4,13 @@
     clear     … 日にち＋時間が揃った出勤の返事 → shift_auto が上げて「上げました」と返す
     thanks    … お礼・了解だけ → 返さない（通知だけ）
     ask_when  … 出勤の話だが日にちか時間が足りない・曖昧 → 「出られそうな日と時間が決まったら教えてください」と返す
+    tentative … 日にちだけ（時間なし）の「出勤予定」 → 備考「オキニトークでご確認ください。」を入れて、時間を聞いて返す
+    decline   … 声かけへの「来週は難しい」「予定以外は出られない」など、日にちの無い断り → お礼を返す
     question  … 質問（？が付いている） → 人に見せる
-    other     … それ以外（事情・断り・長い話） → 人に見せる
+    other     … それ以外（事情・当日の欠勤や遅れ・長い話） → 人に見せる
+
+2026-09-28 一希さん「（めとさんに）返信していない。今度からはちゃんと返してね」「（すずらんさんには）協力してくれていることに
+ありがとうのスタンスで」。それまで tentative と decline は人に回していて、返事が抜けていた。
 
 決まりの元: メイン作業場/projects/ヘブン運用・自動化/出勤返事の読み方.md（一希さんが直したらここも直す）
 """
@@ -30,6 +35,10 @@ ASK_REASONS = {
     "「最後まで」がある", "「閉店」がある",
 }
 ASK_TEXT = "出られそうな日と時間が決まったら教えてください🙌"
+DECLINE_TEXT = "お返事ありがとうございます😊\nまた出られる日が決まったら教えてくださいね！"
+# 断りでも、自動では返さず人に見せるもの（当日の欠勤・遅れ・体のこと・辞める話）
+DECLINE_SKIP = ("今日", "本日", "明日", "あした", "当日", "遅れ", "遅刻", "早退", "欠勤", "体調", "熱", "病院", "生理",
+                "インフル", "コロナ", "辞め", "やめます", "やめよう", "やめる", "やめた", "退店", "引退", "卒業")
 
 
 def _core(t):
@@ -49,6 +58,11 @@ def classify(body, now=None, shop=None):
     r = read_shift_reply(t, now, shop)
     if r["status"] in ("clear", "partial"):
         return "clear"
+    if r["status"] == "tentative":
+        return "tentative"
+    # 日にちの無い断り（「来週は出勤難しいです」「県外なので予定以外でれません」）→ お礼を返す
+    if r["status"] == "none" and any(w in t for w in NEG) and len(t) <= 120 and not any(w in t for w in DECLINE_SKIP):
+        return "decline"
     if any(w in t for w in NEG) or any(w in t for w in NEG2):
         return "other"
     if len(t) > 80:
@@ -61,3 +75,7 @@ def classify(body, now=None, shop=None):
 
 def ask_text(yobi):
     return f"{yobi}、連絡ありがとうございます！\n{ASK_TEXT}"
+
+
+def decline_text(yobi):
+    return f"{yobi}、{DECLINE_TEXT}"

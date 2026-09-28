@@ -22,6 +22,11 @@
 「出られそうな日と時間が決まったら教えてください」と返す（reply_rules.py）。質問や事情は返さず、人に見せる。
 止めたい時はリポジトリの変数 AUTO_REPLY を off。
 
+2026-09-28 から（一希さん「返信していない。今度からはちゃんと返してね」）:
+    出勤予定（日にちだけ・「多分」など）→ 備考に「オキニトークでご確認ください。」を入れて、決まったら返してねと返す
+    声かけへの断り（「来週は難しいです」）→ お礼を返す
+    どちらも、店の直前の発言が出勤の話の時だけ（関係ない話の日付を読み違えないため）。
+
 裏姫デコの依頼（「裏姫デコほしい」）も、ここで見つける。見つけたら非公開の cast-mypage の仕組みを起動して、
 ページを作って本人に送ってもらう（cast_mypage.py。鍵が無ければ通知だけ）。
 
@@ -70,6 +75,7 @@ LOGISTICS_REPLY = "個室・迎えの件は確認して連絡するね！"
 # 一希さんが返し方を決める子（キャストID、金庫 NO_AUTO_IDS にカンマ区切り）。この子には何も自動で送らず、通知だけ
 NO_AUTO = {int(x) for x in os.environ.get("NO_AUTO_IDS", "").replace(" ", "").split(",") if x.isdigit()}
 WAIT_MIN = 10                   # 続けて送ってくる途中で返さないよう、最後の発言からこの分数は待つ
+SHIFT_TALK = ("出勤", "出られ", "出れ", "◯日", "シフト")   # 店の直前の発言が出勤の話かどうか（出勤予定・断りに自動で返す条件）
 
 
 def clean_name(name: str) -> str:
@@ -197,6 +203,10 @@ def notify_one(x, result=None, urahime=None, auto=None):
             body += ("\n\n→ 日にち・時間がまだなので「" + reply_rules.ASK_TEXT + "」と自動で返しました") if ok else \
                     "\n\n！ 自動の返事が送れませんでした。手で返してください"
             extra = {"Tags": "calendar"} if ok else {"Tags": "warning", "Priority": "high"}
+        elif what == "decline":
+            body += ("\n\n→ 声かけへの断りなので「" + reply_rules.DECLINE_TEXT.replace("\n", " ") + "」と自動で返しました") if ok else \
+                    "\n\n！ 自動の返事が送れませんでした。手で返してください"
+            extra = {"Priority": "low"} if ok else {"Tags": "warning", "Priority": "high"}
         elif what == "thanks":
             body += "\n\n（お礼・了解のみ。返信は不要と判断）"
             extra = {"Priority": "low"}
@@ -213,7 +223,11 @@ def notify_one(x, result=None, urahime=None, auto=None):
                                       f"自動で起動できませんでした（{msg}）。クロードに「{x['name']}さんの裏姫デコ作って」と言ってください")
     elif result is not None:
         extra = {"Tags": "calendar", "Priority": "high"}
-        if result["ok"]:
+        if result["ok"] and r["status"] == "tentative":
+            body += f"\n\n✅ 出勤予定（備考「オキニトークでご確認ください。」）を入れました: {result['detail']}"
+            body += "\n本人に「決まったら返してね」と返信済み" if result["replied"] else \
+                    "\n！ 返信だけ失敗しました。本人に一言お願いします"
+        elif result["ok"]:
             body += f"\n\n✅ 出勤を上げました: {result['detail']}"
             body += "\n本人に「上げました」と返信済み" if result["replied"] else \
                     "\n！ 返信だけ失敗しました。本人に一言お願いします"
@@ -272,8 +286,10 @@ def main():
         x["logistics"] = any(w in x["body"] for w in LOGISTICS_WORDS)
         if x["gid"] in NO_AUTO:
             x["kind"] = "hold"             # 自動では何もしない（出勤も上げない・返事もしない）
-        if x["logistics"] and x["kind"] in ("ask_when", "thanks"):
+        if x["logistics"] and x["kind"] in ("ask_when", "thanks", "tentative", "decline"):
             x["kind"] = "other"            # 頼みごとが混ざっていたら、自動では返さず人に見せる
+        if x["kind"] in ("tentative", "decline") and not any(w in x.get("prev_shop", "") for w in SHIFT_TALK):
+            x["kind"] = "other"            # 店が出勤の話をしていない時の日付や断りは、読み違いが怖いので人に見せる
     n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
     n_ura = sum(1 for x in fresh if x["urahime"])
     print(f"新しい連絡 {len(fresh)}件（うち出勤の返事で条件なし {n_clear}件、裏姫デコの依頼 {n_ura}件）→ "
@@ -321,6 +337,23 @@ def main():
                     ok = shift_auto.reply(cli, x["shopdir"], x["gid"], reply_rules.ask_text(shift_auto.yobi(x["name"])))
                     print(f'{x["shop"]}: 日にち・時間を聞く返事を自動送信 {"OK" if ok else "NG"}')
                     notify_one(x, auto=("ask", ok))
+            elif kind in ("tentative", "decline") and AUTO_REPLY and (SHIFT_AUTO or kind == "decline"):
+                age = now - (when({"create_date": x["at"]}) or now)
+                if age < timedelta(minutes=WAIT_MIN):
+                    deferred.add(x["id"])          # 続きが来るかもしれないので次の回に回す
+                    continue
+                import shift_auto
+                cli = clis.get(x["shopdir"])
+                if kind == "tentative":
+                    res = shift_auto.handle(cli, x["shopdir"], x["shop"], x["gid"], x["name"], [], now,
+                                            tentative=x["read"].get("tentative", ()), display=x["read"].get("display"))
+                    notify_one(x, res)
+                elif "お返事ありがとうございます" in x.get("prev_shop", "") or cli is None:
+                    notify_one(x, auto=("need", False))   # 二度は同じお礼を返さない
+                else:
+                    ok = shift_auto.reply(cli, x["shopdir"], x["gid"], reply_rules.decline_text(shift_auto.yobi(x["name"])))
+                    print(f'{x["shop"]}: 断りへのお礼を自動送信 {"OK" if ok else "NG"}')
+                    notify_one(x, auto=("decline", ok))
             elif kind == "thanks":
                 if not many:
                     notify_one(x, auto=("thanks", True))

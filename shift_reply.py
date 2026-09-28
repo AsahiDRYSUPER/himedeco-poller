@@ -5,11 +5,14 @@
     tentative  … 「未定」「かも」「残業かも」など迷いの言葉が付いた日 → 上げずに、備考に「オキニトークでご確認ください。」
     declined   … 「休み」「無理」などが付いた日 → 何もしない
     足りない日  … 日にちだけで時間が無い（迷いの言葉も無い）→ 人に見せる
+                 ただし「3,4日出勤予定でお願いします」のように出勤の言葉が付いていれば「出勤予定」＝ tentative
+                 （2026-09-28 街角 めとさんの件。一希さん「出勤予定のシフトでアップして、ちゃんと返して」）
 返す status:
-    clear    … 全部の日が clear
-    partial  … clear の日があり、ほかに tentative / declined の日もある（clear の日だけ上げる）
-    unclear  … 上げてよい日が無い、質問・「変更」がある、読めない所がある → 人に見せる
-    none     … 出勤の話に見えない
+    clear     … 全部の日が clear
+    partial   … clear の日があり、ほかに tentative / declined の日もある（clear の日だけ上げる）
+    tentative … 時間の付いた日が無く、出勤予定（日にちだけ・未定）の日だけ → 備考「オキニトークでご確認ください。」を入れて返す
+    unclear   … 上げてよい日が無い、質問・「変更」がある、読めない所がある → 人に見せる
+    none      … 出勤の話に見えない
 
 決まりの元: メイン作業場/projects/ヘブン運用・自動化/出勤返事の読み方.md（一希さんと決めたパターン集。直されたらここと test_*.py も直す）
 """
@@ -27,13 +30,29 @@ _LAST_MARK = 99          # 読み分けの途中で「ラスト」を表す印�
 # その日を「休み・出ない」にする言葉
 NEG = ("出れない", "出られない", "出勤できない", "出勤できません", "行けない", "いけない", "無理", "むずかしい", "難しい",
        "できない", "出来ない", "休ませ", "お休み", "休み", "休む", "欠勤", "キャンセル", "取り消", "消して", "削除",
-       "なしで", "無しで")
+       "なしで", "無しで", "出れません", "出られません", "でれません", "でられません", "でれない", "でられない",
+       "行けません", "いけません", "厳しい", "きびしい", "できなく", "出来なく", "行けなく", "いけなく", "出れなく",
+       "出られなく", "でれなく", "でられなく")
 # その日だけ「未定」にする言葉（ほかの日は上げる）
 HEDGE = ("かも", "たぶん", "多分", "できれば", "出来れば", "もしかし", "未定", "わからない", "分からない", "分かりません",
          "わかりません", "迷って", "悩んで", "考え", "検討", "くらい", "ぐらい", "頃", "ごろ", "以降", "前後",
          "ラスト", "らすと", "最後まで", "閉店", "午前", "午後", "あれば", "なければ", "もし", "場合", "相談",
          "どちら", "どっち", "いずれ", "または", "もしくは", "体調", "様子", "調整", "決まったら",
-         "後で", "あとで", "また連絡", "残業", "かな")
+         "後で", "あとで", "また連絡", "残業", "かな", "わかんな", "分かんな", "そうだったら", "そうなら",
+         "出れたら", "出られたら", "行けたら")
+# 日にちだけ（時間なし）でも、この言葉があれば「出勤予定」として扱う（2026-09-28）
+ATTEND = ("出勤", "出れ", "出られ", "入れ", "入り", "行け", "行き", "予定", "お願い")
+PAST = ("ました", "でした", "昨日", "先日", "この前", "前回")
+CHOICE = ("どちら", "どっち", "いずれ", "または", "もしくは")
+CHOICE_RE = (re.compile(r"日か(?![らもな])"), re.compile(r"時か(?![らもな])"))   # 「26日か27日」（「18時かも」「かな」は選ばせていない）   # 「3日の出勤ありがとうございました」のような過ぎた日の話は拾わない
+_ANY_TIME = re.compile(r"\d{1,2}\s*時|\d{1,2}:\d{2}")
+
+
+def _has_time_left(txt):
+    """日にちの書き方を取り除いたあとに数字が残っていれば、時間らしきものが書いてある（「26日 12〜ラスト」）。"""
+    for rx in (MD, DAYSPAN, DAYS, WEEKDAY):
+        txt = rx.sub(" ", txt)
+    return bool(re.search(r"\d", txt))
 HEDGE_RE = (re.compile(r"日か(?!ら)"), re.compile(r"時か(?!ら)"))   # 「26日か27日」「15時か18時」
 # 文全体を人に回す言葉（質問・前の返事の変更）
 GLOBAL = ("？", "?", "ですか", "ますか", "でしょうか", "変更", "変えて", "ずらし", "代わり", "かわり", "やっぱり")
@@ -210,6 +229,9 @@ def read_shift_reply(body, now=None, shop=None):
         return result("unclear", "日にちの無い所に「休み」などがある")
 
     clear, tentative, declined, display, incomplete = [], [], [], [], []
+    timed_tentative = False   # 未定の日に読めない時間が書いてある（「4日 最後まで 18時から」）→ 自動の「出勤予定」にはしない
+    choice = False            # 「26日か27日」のように選ばせている → 人に見せる
+    tdisplay = []             # 未定の日の、読めた時間（返事に書く）
     for g in groups:
         for d in g["days"]:
             if not isinstance(d, date):
@@ -222,9 +244,22 @@ def read_shift_reply(body, now=None, shop=None):
             continue
         if _has(HEDGE, txt) or any(rx.search(txt) for rx in HEDGE_RE):
             tentative += g["days"]
+            if _has(CHOICE, txt) or any(rx.search(txt) for rx in CHOICE_RE):
+                choice = True                       # 「26日か27日」→ どちらかを選ぶのは人
+            elif g["range"] is not None:
+                h1, m1 = _hm(*g["range"][:4])
+                h2, m2 = _hm(*g["range"][4:])
+                for d in g["days"]:
+                    end = "ラスト" if h2 == _LAST_MARK else _fmt(h2 + 24 if (h2 <= h1 and h2 <= 9) else h2, m2)
+                    tdisplay.append((d, f"{d.day}日（{_fmt(h1, m1)}〜{end}）"))
+            elif _has_time_left(txt):
+                timed_tentative = True
             continue
         if g["range"] is None:
-            incomplete += g["days"]
+            if _has(ATTEND, txt) and not _has(PAST, txt) and not _has_time_left(txt):
+                tentative += g["days"]          # 日にちだけの「出勤予定」
+            else:
+                incomplete += g["days"]
             continue
         h1, m1 = _hm(*g["range"][:4])
         h2, m2 = _hm(*g["range"][4:])
@@ -257,6 +292,11 @@ def read_shift_reply(body, now=None, shop=None):
     display = [s for _, s in sorted(display)]
     hint = " / ".join(display) + (" / " + "・".join(f"{d.day}日" for d in sorted(set(tentative))) + "は未定" if tentative else "")
     if not clear:
+        if tentative and not timed_tentative and not choice:
+            shown = dict(tdisplay)
+            disp = [shown.get(d, f"{d.day}日") for d in sorted(set(tentative))]
+            return result("tentative", "時間の決まった日が無い（出勤予定の日だけ）", tentative=tentative, declined=declined,
+                          display=disp, hint="・".join(disp) + "は出勤予定")
         return result("unclear", "上げてよい日が無い（未定・休みだけ）", tentative=tentative, declined=declined, hint=hint)
     status = "partial" if (tentative or declined) else "clear"
     return result(status, shifts=clear, tentative=tentative, declined=declined, display=display, hint=hint)

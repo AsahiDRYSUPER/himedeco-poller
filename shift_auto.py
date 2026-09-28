@@ -13,7 +13,7 @@ import sys
 from datetime import date, datetime, timedelta, timezone
 
 from heaven_http import BASE, COMMU_IDS, load_credentials
-from shift_reply import hhmm
+from shift_reply import NOTE_TENTATIVE, hhmm
 
 JST = timezone(timedelta(hours=9))
 
@@ -107,6 +107,13 @@ def open_one(page, shopdir, gid, ymd, start, end, note="", name="", want_text=""
     page.select_option("#edit_end_time", end or "")
     if note:
         page.fill("#scheduleText", note)
+    elif start and page.locator("#scheduleText").count():
+        try:
+            cur = (page.input_value("#scheduleText") or "").strip()
+        except Exception:
+            cur = ""
+        if cur.startswith("次回") or cur == NOTE_TENTATIVE:
+            page.fill("#scheduleText", "")      # 出勤予定の日が決まった時など（2026-09-28）
     page.wait_for_timeout(200)
     # 「登録する」はボタンではなくリンク。人が押すのと同じように押し、無ければ同じ関数を直接呼ぶ。
     link = page.locator('#form_dlg a[href*="doSubmit_ShukkinShiftDialog"], .submitBtn a')
@@ -178,7 +185,6 @@ def upload(shopdir, gid, name, shifts, today, tentative=()):
     """shifts: [(date, "12:00", "20:00")] → ([(date, ok, msg, fill)], [(date, ok, msg)])
     tentative: 未定の日。先に備考へ「オキニトークでご確認ください。」を入れる（その日は「次回◯日」で上書きされない）"""
     from playwright.sync_api import sync_playwright
-    from shift_reply import NOTE_TENTATIVE
     out, notes = [], []
     today_ymd = today.strftime("%Y%m%d")
     with sync_playwright() as pw:
@@ -190,9 +196,16 @@ def upload(shopdir, gid, name, shifts, today, tentative=()):
                 return ([(d, False, "ログインできませんでした", "") for d, _, _ in shifts],
                         [(d, False, "ログインできませんでした") for d in tentative])
             for d in sorted(set(tentative)):
+                ymd = d.strftime("%Y%m%d")
                 try:
-                    ok, msg = open_one(page, shopdir, gid, d.strftime("%Y%m%d"), "", "", note=NOTE_TENTATIVE,
-                                       name=name, want_text=NOTE_TENTATIVE)
+                    before = cell_text(page, gid, ymd) if goto_cell(page, shopdir, gid, ymd, name) else ""
+                    if re.search(r"\d{1,2}:\d{2}", before):
+                        ok, msg = False, f"もう出勤が入っているので触らず（{before}）"   # 備考を入れると出勤が消えるため
+                    elif before.startswith(NOTE_TENTATIVE):
+                        ok, msg = True, "もう出勤予定になっている"
+                    else:
+                        ok, msg = open_one(page, shopdir, gid, ymd, "", "", note=NOTE_TENTATIVE,
+                                           name=name, want_text=NOTE_TENTATIVE)
                 except Exception as ex:
                     ok, msg = False, type(ex).__name__
                 notes.append((d, ok, msg))
@@ -221,6 +234,16 @@ def yobi(name):
 
 
 def reply_text(name, shifts, extra="", tentative=(), display=None):
+    if not shifts and tentative:
+        # 出勤予定（時間未定・「多分」など）だけの時（2026-09-28 一希さん「出勤予定のシフトでアップして、ちゃんと返して」）
+        days = list(display) if display else [f"{d.day}日" for d in sorted(set(tentative))]
+        m = re.match(r"(\d+)日（(.+)）", next((x for x in days if "（" in x), ""))
+        if m:     # 「1日（16:00〜18:00）」→ 例「1日 16時〜18時」
+            how = f"{m.group(1)}日 " + m.group(2).replace(":00", "時").replace(":30", "時半")
+        else:
+            how = f"{sorted(set(tentative))[0].day}日 ◯時〜◯時"
+        return (f"{yobi(name)}、ありがとう！ {'・'.join(days)}は出勤予定で上げておいたよ🙌\n"
+                f"出られるのが決まったら「{how}」みたいに返してね😊") + (f"\n{extra}" if extra else "")
     parts = list(display) if display else [f"{d.day}日 {s}〜{e}" for d, s, e in shifts]
     tail = (f"{'・'.join(f'{d.day}日' for d in sorted(set(tentative)))}は決まったら教えてね😊" if tentative else "当日よろしくね😊")
     return f"{yobi(name)}、ありがとう！ {'・'.join(parts)}で上げておいたよ🙌 {tail}" + (f"\n{extra}" if extra else "")
@@ -259,7 +282,8 @@ def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply="", ten
     results, notes = upload(shopdir, gid, name, shifts, now.date(), tentative)
     parts, all_ok = [], True
     for d, ok, msg in notes:
-        parts.append(f"{d.day}日は未定→備考 {'✅' if ok else '✗ ' + msg}")
+        all_ok = all_ok and ok
+        parts.append(f"{d.day}日は出勤予定→備考 {'✅' if ok else '✗ ' + msg}")
         print(f"  {label} {gid} {d.month}/{d.day} 備考（未定）: {'OK' if ok else 'NG'} {msg}")
     for d, ok, msg, fill in results:
         all_ok = all_ok and ok
