@@ -6,6 +6,8 @@
     ask_when  … 出勤の話だが日にちか時間が足りない・曖昧 → 「出られそうな日と時間が決まったら教えてください」と返す
     tentative … 日にちだけ（時間なし）の「出勤予定」 → 備考「オキニトークでご確認ください。」を入れて、時間を聞いて返す
     decline   … 声かけへの「来週は難しい」「予定以外は出られない」など、日にちの無い断り → お礼を返す
+    later     … 「また決まり次第連絡します」「相談してみます」など、あとで連絡すると言っている → 「分かりました！よろしくお願いします🙏」
+                （2026-09-30 一希さん「分かりました！よろしくお願いしますくらいでいいかな」とろ〜り りあらさん）
     question  … 質問（？が付いている） → 人に見せる
     other     … それ以外（事情・当日の欠勤や遅れ・長い話） → 人に見せる
 
@@ -16,7 +18,7 @@
 """
 import re
 
-from shift_reply import NEG, read_shift_reply
+from shift_reply import DAYS, DAYSPAN, MD, NEG, WEEKDAY, _norm, read_shift_reply
 
 THANKS_RE = re.compile(
     r"^(?:ありがとうございます|ありがとうございました|ありがとうございまーす|ありがとう|了解です|了解しました|了解いたしました|了解|りょうかいです|りょうかい"
@@ -36,6 +38,9 @@ ASK_REASONS = {
 }
 ASK_TEXT = "出られそうな日と時間が決まったら教えてください🙌"
 DECLINE_TEXT = "お返事ありがとうございます😊\nまた出られる日が決まったら教えてくださいね！"
+LATER_TEXT = "分かりました！よろしくお願いします🙏"
+LATER_WORDS = ("決まり次第", "決まったら連絡", "わかったら連絡", "分かったら連絡", "また連絡", "連絡します", "連絡いたします",
+               "連絡しますね", "相談してみます", "相談します")
 # 断りでも、自動では返さず人に見せるもの（当日の欠勤・遅れ・体のこと・辞める話）
 DECLINE_SKIP = ("今日", "本日", "明日", "あした", "当日", "遅れ", "遅刻", "早退", "欠勤", "体調", "熱", "病院", "生理",
                 "インフル", "コロナ", "辞め", "やめます", "やめよう", "やめる", "やめた", "退店", "引退", "卒業")
@@ -65,11 +70,12 @@ def classify(body, now=None, shop=None):
         return "decline"
     if any(w in t for w in NEG) or any(w in t for w in NEG2):
         return "other"
-    if len(t) > 80:
-        return "other"
     # 日にちや時間が少しでも書いてあるもの（unclear）は、読み違いを避けるため自動で聞き返さない（2026-09-27 つくしさんの件）
-    if r["status"] == "none" and any(w in t for w in SHIFT_WORDS):
+    if r["status"] == "none" and len(t) <= 80 and any(w in t for w in SHIFT_WORDS):
         return "ask_when"
+    has_date = any(rx.search(_norm(t, shop)) for rx in (MD, DAYSPAN, DAYS, WEEKDAY))
+    if not has_date and r["status"] in ("none", "unclear") and len(t) <= 300 and any(w in t for w in LATER_WORDS):
+        return "later"          # 「今日相談してみます」の「今日」は出勤の日ではないので、日付の無い話として扱う
     return "other"
 
 

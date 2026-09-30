@@ -189,6 +189,7 @@ def read_shift_reply(body, now=None, shop=None):
                     g = {"days": [], "range": None, "start": s}
                     cg.append(g)
                 g = cg[-1]
+                g["rel" if kind == "rel" else "cal"] = True
                 if kind == "md":
                     g["days"].append(_resolve_md(data[0], data[1], today) or f"{data[0]}/{data[1]}")
                 elif kind == "days":
@@ -247,6 +248,8 @@ def read_shift_reply(body, now=None, shop=None):
             continue
         if _has(HEDGE, txt) or any(rx.search(txt) for rx in HEDGE_RE):
             tentative += g["days"]
+            if not g.get("cal") or (g["range"] is None and not _has(ATTEND, txt)):
+                timed_tentative = True              # 「早ければ今日相談してみます」のような話は出勤予定にしない（2026-09-30）
             if _has(CHOICE, txt) or any(rx.search(txt) for rx in CHOICE_RE):
                 choice = True                       # 「26日か27日」→ どちらかを選ぶのは人
             elif g["range"] is not None:
@@ -259,7 +262,7 @@ def read_shift_reply(body, now=None, shop=None):
                 timed_tentative = True
             continue
         if g["range"] is None:
-            if _has(ATTEND, txt) and not _has(PAST, txt) and not _has_time_left(txt):
+            if g.get("cal") and _has(ATTEND, txt) and not _has(PAST, txt) and not _has_time_left(txt):
                 tentative += g["days"]          # 日にちだけの「出勤予定」
             else:
                 incomplete += g["days"]

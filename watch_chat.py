@@ -212,6 +212,10 @@ def notify_one(x, result=None, urahime=None, auto=None):
             body += ("\n\n→ 声かけへの断りなので「" + reply_rules.DECLINE_TEXT.replace("\n", " ") + "」と自動で返しました") if ok else \
                     "\n\n！ 自動の返事が送れませんでした。手で返してください"
             extra = {"Priority": "low"} if ok else {"Tags": "warning", "Priority": "high"}
+        elif what == "later":
+            body += ("\n\n→ あとで連絡するとのことなので「" + reply_rules.LATER_TEXT + "」と自動で返しました") if ok else \
+                    "\n\n！ 自動の返事が送れませんでした。手で返してください"
+            extra = {"Priority": "low"} if ok else {"Tags": "warning", "Priority": "high"}
         elif what == "thanks":
             body += "\n\n（お礼・了解のみ。返信は不要と判断）"
             extra = {"Priority": "low"}
@@ -291,9 +295,9 @@ def main():
         x["logistics"] = any(w in x["body"] for w in LOGISTICS_WORDS)
         if x["gid"] in NO_AUTO:
             x["kind"] = "hold"             # 自動では何もしない（出勤も上げない・返事もしない）
-        if x["logistics"] and x["kind"] in ("ask_when", "thanks", "tentative", "decline"):
+        if x["logistics"] and x["kind"] in ("ask_when", "thanks", "tentative", "decline", "later"):
             x["kind"] = "other"            # 頼みごとが混ざっていたら、自動では返さず人に見せる
-        if x["kind"] in ("tentative", "decline") and not any(w in x.get("prev_shop", "") for w in SHIFT_TALK):
+        if x["kind"] in ("tentative", "decline", "later") and not any(w in x.get("prev_shop", "") for w in SHIFT_TALK):
             x["kind"] = "other"            # 店が出勤の話をしていない時の日付や断りは、読み違いが怖いので人に見せる
     n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
     n_ura = sum(1 for x in fresh if x["urahime"])
@@ -342,7 +346,7 @@ def main():
                     ok = shift_auto.reply(cli, x["shopdir"], x["gid"], reply_rules.ask_text(shift_auto.yobi(x["name"])))
                     print(f'{x["shop"]}: 日にち・時間を聞く返事を自動送信 {"OK" if ok else "NG"}')
                     notify_one(x, auto=("ask", ok))
-            elif kind in ("tentative", "decline") and AUTO_REPLY and (SHIFT_AUTO or kind == "decline"):
+            elif kind in ("tentative", "decline", "later") and AUTO_REPLY and (SHIFT_AUTO or kind != "tentative"):
                 age = now - (when({"create_date": x["at"]}) or now)
                 if age < timedelta(minutes=WAIT_MIN):
                     deferred.add(x["id"])          # 続きが来るかもしれないので次の回に回す
@@ -353,6 +357,13 @@ def main():
                     res = shift_auto.handle(cli, x["shopdir"], x["shop"], x["gid"], x["name"], [], now,
                                             tentative=x["read"].get("tentative", ()), display=x["read"].get("display"))
                     notify_one(x, res)
+                elif kind == "later":
+                    if reply_rules.LATER_TEXT[:8] in x.get("prev_shop", "") or cli is None:
+                        notify_one(x, auto=("need", False))   # 二度は同じ文を返さない
+                    else:
+                        ok = shift_auto.reply(cli, x["shopdir"], x["gid"], reply_rules.LATER_TEXT)
+                        print(f'{x["shop"]}: 「分かりました」を自動送信 {"OK" if ok else "NG"}')
+                        notify_one(x, auto=("later", ok))
                 elif "お返事ありがとうございます" in x.get("prev_shop", "") or cli is None:
                     notify_one(x, auto=("need", False))   # 二度は同じお礼を返さない
                 else:

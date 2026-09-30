@@ -1,8 +1,13 @@
 """姫デコチャットの新着を5分ごとに確認する。
 
 一覧は「新しい連絡があったトークが上」に並ぶので、各店舗の上位だけを見る。
-・口コミ返信へのフィードバックらしいメッセージ → お礼を自動返信
+・口コミ返信へのフィードバックらしいメッセージ → お礼を自動返信（2026-09-30 から既定で止めている）
 ・それ以外の未読 → 自動返信せず、件数だけ数える(内容は管理画面で確認する)
+
+2026-09-30 止めた理由: 「返信」「ai」などの言葉だけで決めていたため、とろ〜り りあらさんの
+「私も1回目はAIと気付かずに返信してしまいました…また決まり次第連絡いたしますね！」に
+「ご報告ありがとうございます！確認して、口コミ返信の改善に活かします🙏」と返してしまった（一希さん「この返信はおかしい」）。
+新しい連絡への返事と通知は watch_chat.py（board-collect）が受け持つ。どうしても使う時はリポジトリ変数 FEEDBACK_ACK=on。
 
 このリポジトリは公開なので、実行ログにキャスト名・メッセージ本文は一切出さない(件数のみ)。
 状態ファイルも持たない: 「相手のメッセージより後に店側の送信があるか」で対応済みかを判定する。
@@ -18,6 +23,7 @@ from heaven_http import BASE, HeavenClient, load_credentials
 
 SHOPS = ["cg_kirakira", "s_matikado", "mrs_orange", "venus_okayama", "potya_reen", "torori_angel", "undercover"]
 DRY_RUN = os.environ.get("REPLY_DRY_RUN", "true").lower() != "false"
+ACK_ON = os.environ.get("FEEDBACK_ACK", "off").strip().lower() == "on"
 VERIFY = os.environ.get("VERIFY_ORDER", "") == "1"
 TOP_N = 15
 ACK_WINDOW = timedelta(hours=3)
@@ -100,7 +106,7 @@ def main() -> int:
                     text = clean(t.get("body", ""))
                     if not text:
                         continue
-                    if looks_like_feedback(text):
+                    if ACK_ON and looks_like_feedback(text):
                         if now - when <= ACK_WINDOW and not DRY_RUN:
                             res = api(client, "/himedecochat/api/send_message", {"talk_message": ACK_MESSAGE, "girls_id": gid})
                             acked += res.get("result") == 0

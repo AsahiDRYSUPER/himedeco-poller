@@ -111,6 +111,12 @@ chk("26日か27日 12〜20時", None, "unclear", [], [date(2026, 9, 26), date(20
 chk("9/29 19時迎え19時30分~lastまで出勤お願いします🙇‍♀️ 街角待機で", "s_matikado", "clear",
     [(date(2026, 9, 29), "19:30", "27:00")], now=datetime(2026, 9, 29, 14, 31))
 chk("3日 18時~LAST", "s_matikado", "clear", [(date(2026, 10, 3), "18:00", "27:00")], now=NOW3)
+# 「今日・明日」だけの未定や、出勤の言葉が無い未定は、出勤予定にしない（2026-09-30 とろ〜り りあらさん）
+r = read_shift_reply("次の出勤をあげるタイミングで早ければ今日相談してみます！ / また決まり次第連絡いたしますね！", NOW3, "torori_angel")
+if r["status"] == "tentative":
+    ok = False
+    print(f"✗ 出勤予定にしてはいけない: {r}")
+chk("明日出勤できます", "s_matikado", "unclear", [], [], now=NOW3)    # 日付が「明日」だけ・時間なし → 人へ
 chk("26日 12〜ラスト", "s_matikado", "unclear", [], [date(2026, 10, 26)], now=NOW3)  # 時間らしき数字がある → 人へ
 r = read_shift_reply("お疲れ様です 29日23時からラスト", NOW2, "cg_kirakira")
 assert r["display"] == ["29日 23:00〜ラスト"], r["display"]
