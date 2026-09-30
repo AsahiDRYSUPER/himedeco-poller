@@ -107,6 +107,10 @@ for txt in ("10/1多分入れるのではいりたいですね、16:00~18:00と�
         ok = False
         print(f"✗ 出勤予定のはず: {txt!r} → {r}")
 chk("26日か27日 12〜20時", None, "unclear", [], [date(2026, 9, 26), date(2026, 9, 27)], now=NOW)   # 選ばせている → 人へ
+# 英字の last と「~」（2026-09-29 街角 りくさん。読めずに出勤が上がらず、返事も抜けた）
+chk("9/29 19時迎え19時30分~lastまで出勤お願いします🙇‍♀️ 街角待機で", "s_matikado", "clear",
+    [(date(2026, 9, 29), "19:30", "27:00")], now=datetime(2026, 9, 29, 14, 31))
+chk("3日 18時~LAST", "s_matikado", "clear", [(date(2026, 10, 3), "18:00", "27:00")], now=NOW3)
 chk("26日 12〜ラスト", "s_matikado", "unclear", [], [date(2026, 10, 26)], now=NOW3)  # 時間らしき数字がある → 人へ
 r = read_shift_reply("お疲れ様です 29日23時からラスト", NOW2, "cg_kirakira")
 assert r["display"] == ["29日 23:00〜ラスト"], r["display"]

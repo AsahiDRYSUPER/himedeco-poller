@@ -70,7 +70,10 @@ SHIFT_AUTO = os.environ.get("SHIFT_AUTO", "on").strip().lower() not in ("off", "
 URAHIME_WORDS = ("裏姫デコ", "うら姫デコ", "ウラ姫デコ", "裏ひめデコ", "裏姫でこ", "裏姫ﾃﾞｺ")
 AUTO_REPLY = os.environ.get("AUTO_REPLY", "on").strip().lower() not in ("off", "0", "false", "no")
 # 個室・迎えなど、出勤を上げるだけでは終わらない頼みごと。人（一希さん）が対応する（2026-09-25 の指摘）
-LOGISTICS_WORDS = ("個室", "迎え", "送迎", "待機場所", "ホテル待機", "寮", "出張")
+LOGISTICS_WORDS = ("個室", "迎え", "送迎", "待機", "寮", "出張")
+# 頼みごとの中身（通知にはっきり書く。待機場所の変更は別のCTIへの入力が要るので人がやる。2026-09-30 一希さん）
+LOGISTICS_KINDS = (("待機", "待機場所の変更（CTIへの入力が必要）"), ("個室", "個室（ブース管理表）"),
+                   ("迎え", "迎え・送迎"), ("送迎", "迎え・送迎"), ("寮", "寮"), ("出張", "出張"))
 LOGISTICS_REPLY = "個室・迎えの件は確認して連絡するね！"
 # 一希さんが返し方を決める子（キャストID、金庫 NO_AUTO_IDS にカンマ区切り）。この子には何も自動で送らず、通知だけ
 NO_AUTO = {int(x) for x in os.environ.get("NO_AUTO_IDS", "").replace(" ", "").split(",") if x.isdigit()}
@@ -196,7 +199,9 @@ def notify_one(x, result=None, urahime=None, auto=None):
     body = x["body"][:300]
     extra = None
     if x.get("logistics"):
-        body += "\n\n！ 個室・迎えなどの頼みごとが入っています → 要対応（出勤以外は自動では処理していません）"
+        what = list(dict.fromkeys(label for w, label in LOGISTICS_KINDS if w in x["body"]))
+        body += ("\n\n！ 頼みごとの連絡が来ています：" + "・".join(what) +
+                 "\n→ まだ処理していません。出勤は先に上げます（上げられた時）。この件は手で対応してください")
     if auto is not None:
         what, ok = auto
         if what == "ask":

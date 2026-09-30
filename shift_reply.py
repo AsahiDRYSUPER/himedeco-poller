@@ -76,6 +76,9 @@ _CLAUSE = re.compile(r"\s+/\s+|\n+|[。！!]+")          # 「 / 」は見張り
 def _norm(t, shop=None):
     t = (t or "").translate(_Z2H).replace("　", " ")
     t = _DASH.sub("〜", t)
+    # 「19時30分~lastまで」「18時〜LAST」も「ラスト」として読む（2026-09-29 街角 りくさんの件）
+    t = re.sub(r"last", "ラスト", t, flags=re.IGNORECASE)
+    t = re.sub(r"[~～]\s*(?=ラスト|らすと|最後|閉店)", "〜", t)
     # 「16時〜0時 10月2日」の「0時 10」を「0時10分」と読まないよう、時のあとに空白＋数字（分が付かない）が来たら区切る
     t = re.sub(r"時\s+(?=\d{1,2}(?!\d)(?!\s*分))", "時、", t)
     t = LAST_WORDS.sub(lambda mm: f"{mm.group(1)}〜{_LAST_MARK}時", t)
