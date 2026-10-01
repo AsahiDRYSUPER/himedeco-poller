@@ -4,6 +4,7 @@ set -e
 rm -rf /tmp/pub && mkdir /tmp/pub
 cp out/shops.json out/next_shifts.json /tmp/pub/
 cp out/todo.enc.json /tmp/pub/ 2>/dev/null || true
+cp out/requests.enc.json /tmp/pub/ 2>/dev/null || true   # 頼みごと(個室・待機場所・迎え)。名前を含むので暗号化済み
 cp out/chat_seen.json /tmp/pub/ 2>/dev/null || true   # 通知済みメッセージのID(数字のみ。名前も本文も入っていない)
 cd /tmp/pub
 git init -q -b data

@@ -47,6 +47,7 @@ from heaven_http import BASE, HeavenClient, LoginError, load_credentials
 from shift_reply import read_shift_reply
 import cast_mypage
 import reply_rules
+import requests_log
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
@@ -201,7 +202,8 @@ def notify_one(x, result=None, urahime=None, auto=None):
     if x.get("logistics"):
         what = list(dict.fromkeys(label for w, label in LOGISTICS_KINDS if w in x["body"]))
         body += ("\n\n！ 頼みごとの連絡が来ています：" + "・".join(what) +
-                 "\n→ まだ処理していません。出勤は先に上げます（上げられた時）。この件は手で対応してください")
+                 "\n→ まだ処理していません。出勤は先に上げます（上げられた時）。この件は手で対応してください" +
+                 "\n→ 店舗状況ボードの「頼みごと」にも入れました。済んだらチェックしてください")
     if auto is not None:
         what, ok = auto
         if what == "ask":
@@ -332,6 +334,7 @@ def main():
                                         x["read"]["shifts"], now,
                                         tentative=x["read"].get("tentative", ()), display=x["read"].get("display"),
                                         extra_reply="")   # 個室・迎えのことは返事に書かない（一希さん 9/27）。通知で人が対応する
+                x["shift_res"] = res
                 notify_one(x, res)
             elif kind == "ask_when" and AUTO_REPLY:
                 age = now - (when({"create_date": x["at"]}) or now)
@@ -384,6 +387,24 @@ def main():
                 pass
         base.add(x["id"])
         save_seen(base)
+    # 個室・待機場所・迎えなどの頼みごとは、済むまでボードの「頼みごと」に残す（2026-10-01）
+    reqs = []
+    for x in fresh:
+        if not x.get("logistics") or x["id"] in deferred:
+            continue
+        r = x.get("shift_res")
+        reqs.append({
+            "id": x["id"], "shop": x["shop"], "shopdir": x["shopdir"], "name": x["name"], "gid": x["gid"], "at": x["at"],
+            "kinds": list(dict.fromkeys(label for w, label in LOGISTICS_KINDS if w in x["body"])),
+            "when": " / ".join(x["read"].get("display") or []) or x["read"].get("hint") or "",
+            "shift": ("出勤は自動で上げた" if r and r.get("ok") else
+                      "出勤は上げられなかった" if r else "出勤は自動では上げていない"),
+            "body": x["body"][:300],
+        })
+    try:
+        requests_log.record(reqs)
+    except Exception as e:
+        print("頼みごとの記録に失敗:", type(e).__name__)
     save_seen((base | all_ids) - deferred)
 
 
