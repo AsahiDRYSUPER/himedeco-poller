@@ -324,6 +324,53 @@ def next_shifts(today):
     return out
 
 
+def save_kpi_history(now, shops):
+    """Addnessの店舗運営KPI用に、その日の「出勤人数」と「次回未提出の人数」を日ごとに残す（店ごとの人数だけ。名前は無い）。
+    5分ごとに今日の分を上書きするので、日付が変わった時点で前の日の分が「日の終わりの値」になる。
+    ヘブンは過ぎた日の出勤を2日前までしか残さないので、ここに残さないと後から記録できない。
+    ここで失敗しても、ボードのデータ更新は止めない。"""
+    try:
+        path = OUT_DIR / "kpi_history.json"
+        hist = None
+        if path.exists():
+            hist = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            for _ in range(3):
+                try:
+                    r = requests.get(f"{PUBLIC_RAW}/kpi_history.json?t={int(now.timestamp())}", timeout=30)
+                except requests.RequestException:
+                    continue
+                if r.status_code == 200:
+                    hist = r.json()
+                    break
+                if r.status_code == 404:   # まだ一度も書いていない
+                    hist = {"days": {}}
+                    break
+            if hist is None:
+                print("KPIの履歴を読めなかったので、今回は書きません")
+                return
+        if not isinstance(hist, dict) or not isinstance(hist.get("days"), dict):
+            hist = {"days": {}}
+        today = now.strftime("%Y%m%d")
+        day = hist["days"].get(today) or {"attendance": {}, "no_next": {}}
+        for s in shops:
+            if s["error"]:
+                continue   # 取れなかった店は、前に取れた値を残す
+            att = s["attendance"].get(today)
+            if att is not None:
+                day["attendance"][s["label"]] = att
+            if s["no_next"] is not None:
+                day["no_next"][s["label"]] = s["no_next"]
+        day["updated_at"] = now.isoformat(timespec="seconds")
+        hist["days"][today] = day
+        for k in sorted(hist["days"])[:-120]:   # 120日より前は消す
+            del hist["days"][k]
+        hist["note"] = "日ごとの店別の人数（その日の最後に集めた値）。attendance=出勤人数、no_next=今日出勤で次回未提出の人数"
+        path.write_text(json.dumps(hist, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print("KPIの履歴を書けませんでした:", type(e).__name__)
+
+
 def main():
     now = datetime.now(JST)
     days = [now + timedelta(days=i) for i in range(7)]
@@ -361,6 +408,7 @@ def main():
     todo_enc = encrypt_todo({"generated_at": now.isoformat(timespec="seconds"), "date": today_s,
                              "shops": todo_shops, "prev": yday})
     (OUT_DIR / "shops.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    save_kpi_history(now, shops)
     (OUT_DIR / "next_shifts.json").write_text(json.dumps(shifts, ensure_ascii=False), encoding="utf-8")
     if todo_enc:
         (OUT_DIR / "todo.enc.json").write_text(json.dumps(todo_enc), encoding="utf-8")
