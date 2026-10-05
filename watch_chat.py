@@ -23,6 +23,11 @@
 10分待ってから「確認して、あらためて連絡しますね」とだけ返し、中身は人に見せる（2026-10-05〜）。
 止めたい時はリポジトリの変数 AUTO_REPLY を off。
 
+個室の頼み（2026-10-05〜 一希さん「個室の依頼の場合は、個室の確保までがセット」）:
+    日にち＋時間が揃った返事なら、出勤を上げたあと寮管理表のブース管理表に個室も取る（booth.py）。
+    「出勤申請した時間で個室を」のように時間が無い時は、出勤申請の日と時刻を読んで取る（shift_apply.py。承認はしない）。
+    本人には部屋のことは送らない（当日までに部屋を入れ替えることがあるため）。結果は通知とボードの頼みごとへ。
+
 2026-09-28 から（一希さん「返信していない。今度からはちゃんと返してね」）:
     出勤予定（日にちだけ・「多分」など）→ 備考に「オキニトークでご確認ください。」を入れて、決まったら返してねと返す
     声かけへの断り（「来週は難しいです」）→ お礼を返す
@@ -50,6 +55,7 @@ import cast_mypage
 import reply_rules
 import requests_log
 import booth
+import shift_apply
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
@@ -197,6 +203,28 @@ def post_ntfy(title, body, extra=None):
         print("通知を送れませんでした:", type(e).__name__)
 
 
+def book_from_apply(x, cli, now):
+    """出勤申請の日と時刻で個室を取る（読むだけ＋寮管理表へ書く。出勤申請の承認はしない）。
+    結果は x["apply_res"]・x["booth_res"] に入れる。公開リポジトリなので、名前・時刻はログに出さない。"""
+    try:
+        days = shift_apply.named_days(x.get("raw") or x["body"], now, x["shopdir"])
+        until = max(days) if days else now.date() + timedelta(days=shift_apply.AHEAD_DAYS)
+        apps = shift_apply.read(cli, x["shopdir"], x["gid"], now.date(), until)
+        picked = shift_apply.pick(apps, now, days)
+        want = set(d for d, _, _ in picked) | set(days)
+        shown = [a for a in apps if a["day"] in want] if want else [a for a in apps if a["day"] >= now.date()][:8]
+        x["apply_res"] = {"shown": shown, "picked": picked}
+        if picked:
+            b = booth.book(x["shopdir"], x["name"], picked, booth.pref_of(x["body"]))
+            x["booth_res"] = b
+            print(f'{x["shop"]}: 出勤申請の時間で個室の自動予約 {sum(1 for i in b["items"] if i["ok"])}/{len(b["items"])}')
+        else:
+            print(f'{x["shop"]}: 出勤申請に個室を取れる時間が見つからず、人へ')
+    except Exception as e:
+        x["apply_res"] = {"error": type(e).__name__}
+        print(f'{x["shop"]}: 出勤申請を読めませんでした {type(e).__name__}')
+
+
 def notify_one(x, result=None, urahime=None, auto=None):
     r = x["read"]
     body = x["body"][:300]
@@ -205,6 +233,17 @@ def notify_one(x, result=None, urahime=None, auto=None):
         what = list(dict.fromkeys(label for w, label in LOGISTICS_KINDS if w in x["body"]))
         b = x.get("booth_res")
         rest = [w for w in what if not (b and b["ok_all"] and w.startswith("個室"))]
+        ap = x.get("apply_res")
+        if ap is not None:
+            if ap.get("error"):
+                body += f"\n\n！ 出勤申請を読めませんでした（{ap['error']}）→ 個室は手で取ってください"
+            elif not ap["picked"]:
+                body += "\n\n！ 出勤申請に、個室を取れる時間の申請が見つかりませんでした" + \
+                        (f"（{shift_apply.display(ap['shown'])}）" if ap["shown"] else "") + " → 個室は手で取ってください"
+            else:
+                body += "\n\n出勤申請：" + shift_apply.display(ap["shown"])
+                if any(a["state"] == "承認待ち" for a in ap["shown"]):
+                    body += "\n→ 承認待ちの申請があります。管理画面の「出勤申請」で承認してください（見張りは承認はしません）"
         if b:
             body += ("\n\n✅ 個室を自動で取りました：" + booth.summary(b)) if b["ok_all"] else \
                     ("\n\n！ 個室を自動で取りきれませんでした：" + booth.summary(b) + "\n→ 取れなかった日は手で取ってください")
@@ -313,6 +352,10 @@ def main():
             x["kind"] = "other"            # 頼みごとが混ざっていたら、自動では返さず人に見せる
         if x["kind"] in ("tentative", "decline", "later") and not any(w in x.get("prev_shop", "") for w in SHIFT_TALK):
             x["kind"] = "other"            # 店が出勤の話をしていない時の日付や断りは、読み違いが怖いので人に見せる
+        # 出勤申請の話（「申請した時間で」など）は、時刻が申請のほうに入っている。出勤予定にしたり聞き返したりしない（2026-10-05）
+        x["apply"] = bool(shift_apply.APPLY_RE.search(x["body"])) and x["read"]["status"] not in ("clear", "partial")
+        if x["apply"] and x["kind"] in ("ask_when", "tentative", "decline", "later"):
+            x["kind"] = "other"
     n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
     n_ura = sum(1 for x in fresh if x["urahime"])
     print(f"新しい連絡 {len(fresh)}件（うち出勤の返事で条件なし {n_clear}件、裏姫デコの依頼 {n_ura}件）→ "
@@ -401,6 +444,9 @@ def main():
                     deferred.add(x["id"])          # 続きが来るかもしれないので次の回に回す
                     continue
                 cli = clis.get(x["shopdir"])
+                # 「出勤申請した時間で個室を」→ 申請の日と時刻で個室を取る（2026-10-05 一希さん）。本人には部屋のことは送らない
+                if x.get("apply") and cli is not None and booth.enabled(x["shopdir"]) and shift_apply.wants_booth(x["body"]):
+                    book_from_apply(x, cli, now)
                 if reply_rules.HOLD_TEXT[:10] in x.get("prev_shop", "") or cli is None:
                     notify_one(x, auto=("need", False))   # 同じ受け取りの返事を二度は送らない
                 else:
@@ -428,7 +474,8 @@ def main():
         reqs.append({
             "id": x["id"], "shop": x["shop"], "shopdir": x["shopdir"], "name": x["name"], "gid": x["gid"], "at": x["at"],
             "kinds": list(dict.fromkeys(label for w, label in LOGISTICS_KINDS if w in x["body"])),
-            "when": " / ".join(x["read"].get("display") or []) or x["read"].get("hint") or "",
+            "when": ("出勤申請 " + shift_apply.display(x["apply_res"]["shown"])) if (x.get("apply_res") or {}).get("shown") else
+                    (" / ".join(x["read"].get("display") or []) or x["read"].get("hint") or ""),
             "shift": ("出勤は自動で上げた" if r and r.get("ok") else
                       "出勤は上げられなかった" if r else "出勤は自動では上げていない") +
                      (("／個室は自動で取った（" + booth.summary(x["booth_res"]) + "）") if x.get("booth_res") and x["booth_res"]["ok_all"] else

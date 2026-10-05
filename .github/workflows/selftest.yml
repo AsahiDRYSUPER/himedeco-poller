@@ -19,6 +19,10 @@ jobs:
         env:
           BOOTH_URL: ${{ secrets.BOOTH_URL }}
         run: python3 booth.py --check
+      - name: 出勤申請が読めるか（読むだけ。数だけ出す）
+        env:
+          CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
+        run: python3 shift_apply.py --selftest
       - run: python3 -m playwright install --with-deps chromium
       - name: 返事の読み方
         run: python3 test_shift_reply.py

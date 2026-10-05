@@ -31,7 +31,7 @@ jobs:
       - name: ブラウザを用意する（出勤の返事をそのまま上げる時に使う）
         run: python3 -m playwright install --with-deps chromium
       - name: 出勤の返事の読み方が壊れていないか
-        run: python3 test_shift_reply.py && python3 test_reply_rules.py
+        run: python3 test_shift_reply.py && python3 test_reply_rules.py && python3 test_shift_apply.py
       - name: Collect
         env:
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
