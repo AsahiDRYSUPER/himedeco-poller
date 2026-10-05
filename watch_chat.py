@@ -19,7 +19,8 @@
 止めたい時: リポジトリの変数 SHIFT_AUTO を off にすると、上げずに通知だけに戻る。
 
 お礼・了解だけの連絡は返さない。出勤の話で日にちか時間が足りない連絡には
-「出られそうな日と時間が決まったら教えてください」と返す（reply_rules.py）。質問や事情は返さず、人に見せる。
+「出られそうな日と時間が決まったら教えてください」と返す（reply_rules.py）。質問や事情・読み切れない連絡には、
+10分待ってから「確認して、あらためて連絡しますね」とだけ返し、中身は人に見せる（2026-10-05〜）。
 止めたい時はリポジトリの変数 AUTO_REPLY を off。
 
 2026-09-28 から（一希さん「返信していない。今度からはちゃんと返してね」）:
@@ -227,6 +228,10 @@ def notify_one(x, result=None, urahime=None, auto=None):
         elif what == "need":
             body += "\n\n→ 要返信（自動では返していません）"
             extra = {"Priority": "high"}
+        elif what == "hold_reply":
+            body += ("\n\n→ 読み切れない連絡なので「" + reply_rules.HOLD_TEXT + "」とだけ自動で返しました。中身は手で対応してください") if ok else \
+                    "\n\n！ 自動の返事が送れませんでした。手で返してください"
+            extra = {"Priority": "high"} if ok else {"Tags": "warning", "Priority": "high"}
     elif urahime is not None:
         ok, msg = urahime
         extra = {"Tags": "sparkles", "Priority": "high"}
@@ -376,6 +381,20 @@ def main():
             elif kind == "thanks":
                 if not many:
                     notify_one(x, auto=("thanks", True))
+            elif kind in ("question", "other") and AUTO_REPLY:
+                # 読み切れない連絡でも、女の子を待たせない：まず「確認して連絡します」とだけ返し、中身は人へ（2026-10-05）
+                age = now - (when({"create_date": x["at"]}) or now)
+                if age < timedelta(minutes=WAIT_MIN):
+                    deferred.add(x["id"])          # 続きが来るかもしれないので次の回に回す
+                    continue
+                cli = clis.get(x["shopdir"])
+                if reply_rules.HOLD_TEXT[:10] in x.get("prev_shop", "") or cli is None:
+                    notify_one(x, auto=("need", False))   # 同じ受け取りの返事を二度は送らない
+                else:
+                    import shift_auto
+                    ok = shift_auto.reply(cli, x["shopdir"], x["gid"], reply_rules.HOLD_TEXT)
+                    print(f'{x["shop"]}: 「確認して連絡します」を自動送信 {"OK" if ok else "NG"}')
+                    notify_one(x, auto=("hold_reply", ok))
             elif not many:
                 notify_one(x, auto=("need", False))
         except Exception as e:
