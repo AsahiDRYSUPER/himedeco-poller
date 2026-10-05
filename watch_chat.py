@@ -49,6 +49,7 @@ from shift_reply import read_shift_reply
 import cast_mypage
 import reply_rules
 import requests_log
+import booth
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
@@ -202,9 +203,15 @@ def notify_one(x, result=None, urahime=None, auto=None):
     extra = None
     if x.get("logistics"):
         what = list(dict.fromkeys(label for w, label in LOGISTICS_KINDS if w in x["body"]))
-        body += ("\n\n！ 頼みごとの連絡が来ています：" + "・".join(what) +
-                 "\n→ まだ処理していません。出勤は先に上げます（上げられた時）。この件は手で対応してください" +
-                 "\n→ 店舗状況ボードの「頼みごと」にも入れました。済んだらチェックしてください")
+        b = x.get("booth_res")
+        rest = [w for w in what if not (b and b["ok_all"] and w.startswith("個室"))]
+        if b:
+            body += ("\n\n✅ 個室を自動で取りました：" + booth.summary(b)) if b["ok_all"] else \
+                    ("\n\n！ 個室を自動で取りきれませんでした：" + booth.summary(b) + "\n→ 取れなかった日は手で取ってください")
+        if rest:
+            body += ("\n\n！ 頼みごとの連絡が来ています：" + "・".join(rest) +
+                     "\n→ まだ処理していません。出勤は先に上げます（上げられた時）。この件は手で対応してください" +
+                     "\n→ 店舗状況ボードの「頼みごと」にも入れました。済んだらチェックしてください")
     if auto is not None:
         what, ok = auto
         if what == "ask":
@@ -340,6 +347,13 @@ def main():
                                         tentative=x["read"].get("tentative", ()), display=x["read"].get("display"),
                                         extra_reply="")   # 個室・迎えのことは返事に書かない（一希さん 9/27）。通知で人が対応する
                 x["shift_res"] = res
+                # 個室の頼みなら、出勤を上げたあと個室も取る（2026-10-05 一希さん「個室の確保までがセット」）
+                if res and res.get("ok") and "個室" in x["body"] and booth.enabled(x["shopdir"]) and x["read"]["shifts"]:
+                    b = booth.book(x["shopdir"], x["name"], x["read"]["shifts"], booth.pref_of(x["body"]))
+                    x["booth_res"] = b
+                    print(f'{x["shop"]}: 個室の自動予約 {sum(1 for i in b["items"] if i["ok"])}/{len(b["items"])}')
+                    if b["ok_all"] and clis.get(x["shopdir"]) is not None:
+                        shift_auto.reply(clis.get(x["shopdir"]), x["shopdir"], x["gid"], booth.reply_text(b))
                 notify_one(x, res)
             elif kind == "ask_when" and AUTO_REPLY:
                 age = now - (when({"create_date": x["at"]}) or now)
@@ -417,7 +431,9 @@ def main():
             "kinds": list(dict.fromkeys(label for w, label in LOGISTICS_KINDS if w in x["body"])),
             "when": " / ".join(x["read"].get("display") or []) or x["read"].get("hint") or "",
             "shift": ("出勤は自動で上げた" if r and r.get("ok") else
-                      "出勤は上げられなかった" if r else "出勤は自動では上げていない"),
+                      "出勤は上げられなかった" if r else "出勤は自動では上げていない") +
+                     (("／個室は自動で取った（" + booth.summary(x["booth_res"]) + "）") if x.get("booth_res") and x["booth_res"]["ok_all"] else
+                      ("／個室は一部取れず（" + booth.summary(x["booth_res"]) + "）") if x.get("booth_res") else ""),
             "body": x["body"][:300],
         })
     try:
