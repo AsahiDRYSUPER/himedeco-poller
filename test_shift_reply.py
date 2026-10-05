@@ -118,6 +118,12 @@ if r["status"] == "tentative":
     print(f"✗ 出勤予定にしてはいけない: {r}")
 chk("明日出勤できます", "s_matikado", "unclear", [], [], now=NOW3)    # 日付が「明日」だけ・時間なし → 人へ
 chk("26日 12〜ラスト", "s_matikado", "unclear", [], [date(2026, 10, 26)], now=NOW3)  # 時間らしき数字がある → 人へ
+# 半角の「ｰ」やハイフンの仲間で書いた時間（2026-10-05 キラ学 むうさん。読めずに出勤が上がらなかった）
+NOW4 = datetime(2026, 10, 5, 0, 55)
+chk("8日 14時ｰ26時\n9日 14時ｰ26時\n10日14時ｰ26時\n個室お願いしたいです。", "cg_kirakira", "clear",
+    [(date(2026, 10, 8), "14:00", "26:00"), (date(2026, 10, 9), "14:00", "26:00"), (date(2026, 10, 10), "14:00", "26:00")], now=NOW4)
+for dash in ("‐", "‑", "―", "﹣"):
+    chk(f"8日 14時{dash}20時", "cg_kirakira", "clear", [(date(2026, 10, 8), "14:00", "20:00")], now=NOW4)
 r = read_shift_reply("お疲れ様です 29日23時からラスト", NOW2, "cg_kirakira")
 assert r["display"] == ["29日 23:00〜ラスト"], r["display"]
 print("すべて通りました" if ok else "直すところがあります")
