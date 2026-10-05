@@ -352,8 +352,7 @@ def main():
                     b = booth.book(x["shopdir"], x["name"], x["read"]["shifts"], booth.pref_of(x["body"]))
                     x["booth_res"] = b
                     print(f'{x["shop"]}: 個室の自動予約 {sum(1 for i in b["items"] if i["ok"])}/{len(b["items"])}')
-                    if b["ok_all"] and clis.get(x["shopdir"]) is not None:
-                        shift_auto.reply(clis.get(x["shopdir"]), x["shopdir"], x["gid"], booth.reply_text(b))
+                    # 本人には個室のことは送らない（当日までに時間を組み合わせて部屋を入れ替えることがあるため。一希さん 10/5）
                 notify_one(x, res)
             elif kind == "ask_when" and AUTO_REPLY:
                 age = now - (when({"create_date": x["at"]}) or now)
