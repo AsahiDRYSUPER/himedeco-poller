@@ -11,8 +11,9 @@ import re
 import requests
 
 BOOTH_URL = os.environ.get("BOOTH_URL", "").strip()
-# 管理表の利用者の頭文字（一希さんに教わったもの。とろ〜り・UNDERCOVER はまだ分からないので自動では入れない）
-PREFIX = {"cg_kirakira": "K", "s_matikado": "M", "mrs_orange": "O", "venus_okayama": "V", "potya_reen": "P"}
+# 管理表の利用者の頭文字（一希さんに教わったもの。とろ〜り＝T・UNDERCOVER＝U は 2026-10-05）
+PREFIX = {"cg_kirakira": "K", "s_matikado": "M", "mrs_orange": "O", "venus_okayama": "V", "potya_reen": "P",
+          "torori_angel": "T", "undercover": "U"}
 
 
 def short_name(name):
