@@ -15,6 +15,10 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install requests beautifulsoup4 cryptography playwright
+      - name: 個室の自動予約（寮管理表）の鍵が通るか（書き込みなし）
+        env:
+          BOOTH_URL: ${{ secrets.BOOTH_URL }}
+        run: python3 booth.py --check
       - run: python3 -m playwright install --with-deps chromium
       - name: 返事の読み方
         run: python3 test_shift_reply.py

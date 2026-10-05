@@ -63,12 +63,30 @@ def summary(res):
     return "・".join(f'{i["day"].day}日 {i["booth"] if i["ok"] else "取れず（" + (i["error"] or "?") + "）"}' for i in res["items"])
 
 
-def reply_text(res):
-    """本人への一言。部屋が決まっていれば部屋も書く（置き場＝まだ部屋が決まっていない時は、部屋は書かない）。"""
-    days = "・".join(f'{i["day"].day}日' for i in res["items"])
-    rooms = {i["booth"] for i in res["items"]}
-    if rooms and "置き場" not in rooms:
-        if len(rooms) == 1:
-            return f"個室も取っておいたよ🏠 {days}は {rooms.pop()} です"
-        return "個室も取っておいたよ🏠 " + "・".join(f'{i["day"].day}日 {i["booth"]}' for i in res["items"])
-    return f"個室も{days}の分、取っておいたよ🏠"
+def check():
+    """鍵つきURLが通って、管理表が読めるかだけ確かめる（書き込みなし）。名前や部屋はログに出さない。"""
+    from datetime import date, timedelta
+    if not BOOTH_URL:
+        print("BOOTH_URL がありません")
+        return False
+    d = (date.today() + timedelta(days=1)).isoformat()
+    try:
+        j = requests.post(BOOTH_URL, json={"shop": "K", "name": "ためし", "date": d, "start": 12, "end": 13, "dry": True},
+                          timeout=90).json()
+    except Exception as ex:
+        print("つながらない:", type(ex).__name__)
+        return False
+    if j.get("ok"):
+        print("鍵が通って、管理表も読めた")
+        return True
+    if j.get("error") in ("full", "no slot"):
+        print("鍵は通った（明日のその時間は空きなし）")
+        return True
+    print("だめ:", j.get("error"))
+    return False
+
+
+if __name__ == "__main__":
+    import sys
+    if "--check" in sys.argv:
+        raise SystemExit(0 if check() else 1)
