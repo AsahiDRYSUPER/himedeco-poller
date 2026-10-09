@@ -23,6 +23,12 @@ while True:
         subprocess.run([sys.executable, "watch_chat.py"], timeout=900)   # 出勤を上げる時はブラウザ操作で数分かかる
     except Exception as e:
         print("姫デコチャットの見張りに失敗:", type(e).__name__)
+    # 即ヒメの「待機中なのに本当は接客中」を直す（10分に1回。失敗してもボードの更新は止めない）
+    if os.environ.get("CTI_PASSWORD") and int(time.strftime("%M")) // 5 % 2 == 0:
+        try:
+            subprocess.run([sys.executable, "sokuhime_fix.py"], timeout=600)
+        except Exception as e:
+            print("即ヒメ直しに失敗:", type(e).__name__)
     if r.returncode == 0:
         publish()
     if time.time() + INTERVAL > end:

@@ -31,7 +31,7 @@ jobs:
       - name: ブラウザを用意する（出勤の返事をそのまま上げる時に使う）
         run: python3 -m playwright install --with-deps chromium
       - name: 出勤の返事の読み方が壊れていないか
-        run: python3 test_shift_reply.py && python3 test_reply_rules.py && python3 test_shift_apply.py
+        run: python3 test_shift_reply.py && python3 test_reply_rules.py && python3 test_shift_apply.py && python3 test_sokuhime_fix.py
       - name: Collect
         env:
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
@@ -44,6 +44,8 @@ jobs:
           CASTS_MAP: ${{ secrets.CASTS_MAP }}
           TODO_KEY: ${{ secrets.TODO_KEY }}
           BOOTH_URL: ${{ secrets.BOOTH_URL }}
+          CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
+          CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
           GH_TOKEN: ${{ github.token }}
           LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '55' || '0' }}
         run: python3 collect_loop.py

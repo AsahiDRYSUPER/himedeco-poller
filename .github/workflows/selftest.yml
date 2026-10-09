@@ -25,7 +25,13 @@ jobs:
         run: python3 shift_apply.py --selftest
       - run: python3 -m playwright install --with-deps chromium
       - name: 返事の読み方
-        run: python3 test_shift_reply.py
+        run: python3 test_shift_reply.py && python3 test_sokuhime_fix.py
+      - name: 即ヒメ直し（見るだけ。CTIとヘブンを読んで、直す予定だけ出す）
+        env:
+          CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
+          CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
+          CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
+        run: python3 sokuhime_fix.py --dry
       - name: ブラウザでログインして出勤登録の画面が開けるか
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}

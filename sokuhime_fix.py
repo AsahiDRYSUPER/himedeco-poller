@@ -1,0 +1,281 @@
+"""即ヒメの「待機中なのに本当は接客中」を直す（一希さん 2026-10-09）。
+
+何をするか（10分ごと。営業時間 9:00〜翌2:00 の間だけ）：
+  1. CTIの本日スケジュールを読む（cti_schedule.py。読むだけ）
+  2. 店ごとにヘブン管理画面の「即ヒメ登録」（C9StandbyGirlList.php）を開き、1人ずつ見る
+  3. 直すのは「接客中になっていない子」だけ。接客中の子には触らない（待機中に戻すこともしない）
+       ・出勤前（今がCTIの出勤開始より前）             → 接客中、終了＝出勤開始の時刻
+       ・今まさに仕事の最中（「終了」が付いていない箱）  → 接客中、終了＝その箱の終了時刻
+       ・60分以内（とろ〜りは30分以内）に仕事が始まる    → 接客中、終了＝その箱の終了時刻
+       ・仮予約も仕事として数える。「終了」が付いた箱は終わった仕事
+  4. 時間を付けた子だけ記録に残す（out/sokuhime.enc.json。名前を含むので暗号化。ボードで見る）
+
+送り方は画面のJS（sokuhimeCMS.js）と同じ：sokuhimeForm に c_member_id / checkFlg=true / update=接客 / servingEndTime=HH:MM を入れて送る。
+送った後にもう一度ページを読み、本当に接客中になったかを確かめる（なっていなければ「失敗」と記録）。
+"""
+import base64
+import json
+import os
+import re
+import sys
+import time
+import unicodedata
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import requests
+from bs4 import BeautifulSoup
+
+from heaven_http import BASE, HeavenClient, load_credentials
+
+JST = timezone(timedelta(hours=9))
+OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
+PUBLIC_RAW = os.environ.get("PUBLIC_RAW", "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/data")
+LOG_FILE = OUT_DIR / "sokuhime.enc.json"
+SHOPS = {
+    "cg_kirakira": "キラキラ学園", "s_matikado": "街角レディ", "mrs_orange": "オレンジな気持ち",
+    "venus_okayama": "VENUS", "potya_reen": "ぽちゃりーん", "torori_angel": "とろ〜りAngel",
+    "undercover": "UNDERCOVER",
+}
+LEAD_MIN = {"torori_angel": 30}        # 仕事が始まる何分前から接客中にするか（それ以外は60分）
+LEAD_DEFAULT = 60
+OPEN_MIN, CLOSE_MIN = 9 * 60, 26 * 60  # 動く時間帯：9:00〜翌2:00（0:00からの分）
+KEEP_DAYS = 3                           # 記録を残す日数
+
+
+# ---------- 時刻 ----------
+def now_minutes(now):
+    """その営業日の 0:00 からの分。深夜 0〜5時は前の日の続き（24時〜）として数える。"""
+    v = now.hour * 60 + now.minute
+    return v + 24 * 60 if now.hour < 5 else v
+
+
+def hhmm(m):
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def norm(s):
+    t = unicodedata.normalize("NFKC", s or "")
+    t = re.sub(r"[\[【(（].*?[\]】)）]", "", t)
+    return t.replace(" ", "").replace("　", "").replace("…", "")
+
+
+# ---------- ヘブンの即ヒメ登録の画面を読む ----------
+def parse_standby(html):
+    """1人分の箱 → {id, name, shift, serving(接客中か), end(接客終了の時刻の文字), waiting(待機中か)}。
+    ついでにフォームの隠し項目と、時の選択肢（送る時刻の形を決める）も返す。"""
+    s = BeautifulSoup(html, "html.parser")
+    boxes = []
+    for t in s.select("table.sokuhimegirlbox2"):
+        img = t.find("img", class_="servingEndTime")
+        if img is None or not img.get("id"):
+            continue
+        name_td = t.find("td", style=re.compile(r"width:\s*105px"))
+        name = name_td.get_text(" ", strip=True) if name_td else ""
+        shift = ""
+        for td in t.find_all("td"):
+            m = re.search(r"(\d{1,2}:\d{2})\s*[～〜~]\s*(\d{1,2}:\d{2})", td.get_text(" ", strip=True))
+            if m and td.get("colspan"):
+                shift = f"{m.group(1)}-{m.group(2)}"
+                break
+        wait = t.find("img", class_="waitingUpdate")
+        boxes.append({
+            "id": img["id"], "name": name, "shift": shift,
+            "serving": "sekkyaku_on" in (img.get("src") or ""), "end": (img.get("name") or "").strip(),
+            "waiting": bool(wait is not None and "taiki_on" in (wait.get("src") or "")),
+        })
+    form = s.find("form", attrs={"name": "sokuhimeForm"}) or next((f for f in s.find_all("form") if f.find("input", {"name": "servingEndTime"})), None)
+    hidden = {}
+    if form is not None:
+        for e in form.find_all("input"):
+            if e.get("name"):
+                hidden[e["name"]] = e.get("value") or ""
+    hours = []
+    hl = s.find("input", id="servingEndHourHtmlList")
+    if hl is not None:
+        hours = re.findall(r'value="([^"]*)"', hl.get("value") or "")
+    return boxes, hidden, hours
+
+
+def time_for_form(end_min, hours):
+    """送る「接客終了時刻」の文字。画面の時の選択肢に 24・25… があればそのまま、無ければ 24時間制に畳む。"""
+    h, m = end_min // 60, end_min % 60
+    if hours and f"{h:02d}" in hours:
+        return f"{h:02d}:{m:02d}"
+    if hours and str(h) in hours:
+        return f"{h}:{m:02d}"
+    return f"{h % 24:02d}:{m:02d}"
+
+
+# ---------- 直すかどうかを決める ----------
+def decide(box, person, now_min, lead):
+    """返す: (終了の分, 理由) か None。person は cti_schedule の1人分（無ければ None）。"""
+    if box["serving"]:
+        return None                                   # 接客中の子には触らない
+    if person is None:
+        return None
+    work = person.get("work")
+    if work and now_min < work[0]:
+        return work[0], "出勤前"                     # 出勤前は、出勤の時刻まで接客中にしておく
+    for b in person.get("bookings", []):
+        if "終了" in b["flags"]:
+            continue
+        if b["s"] <= now_min < b["e"]:
+            return b["e"], "接客中" + ("（入室）" if "入室" in b["flags"] else "")
+        if now_min < b["s"] <= now_min + lead:
+            return b["e"], f"{b['s'] - now_min}分後に開始"
+    return None
+
+
+def match(boxes, people):
+    """ヘブンの箱 → CTIの人。名前を正規化して突き合わせる（前方一致も許す）。"""
+    by = {}
+    for p in people:
+        by.setdefault(norm(p["name"]), p)
+    out = {}
+    for b in boxes:
+        n = norm(b["name"])
+        p = by.get(n)
+        if p is None and n:
+            cands = [v for k, v in by.items() if k.startswith(n) or n.startswith(k)]
+            p = cands[0] if len(cands) == 1 else None
+        out[b["id"]] = p
+    return out
+
+
+# ---------- ヘブンに送る ----------
+def set_serving(cli, shopdir, box, hidden, end_text):
+    data = dict(hidden)
+    data.update({"c_member_id": box["id"], "girls_name": box["name"], "checkFlg": "true",
+                 "update": "接客", "servingEndTime": end_text})
+    url = f"{BASE}/C9StandbyGirlList.php?shopdir={shopdir}"
+    r = cli.s.post(url + "#TopAnchor", data=data, timeout=30, headers={"Referer": url})
+    r.encoding = "utf-8"
+    if r.status_code != 200:
+        return False, f"HTTP {r.status_code}"
+    r = cli._get(f"/C9StandbyGirlList.php?shopdir={shopdir}")
+    boxes, _, _ = parse_standby(r.text)
+    after = next((b for b in boxes if b["id"] == box["id"]), None)
+    if after is None:
+        return False, "送った後に箱が見つからない"
+    if after["serving"]:
+        return True, after["end"]
+    return False, "送ったが接客中にならなかった"
+
+
+# ---------- 記録（名前を含むので暗号化） ----------
+def _key():
+    k = os.environ.get("TODO_KEY", "")
+    return base64.b64decode(k) if k else None
+
+
+def load_log():
+    key = _key()
+    if key is None:
+        return []
+    try:
+        src = LOG_FILE.read_text(encoding="utf-8") if LOG_FILE.exists() else requests.get(f"{PUBLIC_RAW}/sokuhime.enc.json", timeout=20).text
+        enc = json.loads(src)
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        raw = AESGCM(key).decrypt(base64.b64decode(enc["iv"]), base64.b64decode(enc["ct"]), None)
+        return json.loads(raw).get("entries", [])
+    except Exception:
+        return []
+
+
+def save_log(entries, now):
+    key = _key()
+    if key is None:
+        return
+    cutoff = (now - timedelta(days=KEEP_DAYS)).isoformat()
+    entries = [e for e in entries if e.get("at", "") >= cutoff][-600:]
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    iv = os.urandom(12)
+    payload = {"generated_at": now.isoformat(), "entries": entries}
+    ct = AESGCM(key).encrypt(iv, json.dumps(payload, ensure_ascii=False).encode("utf-8"), None)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_FILE.write_text(json.dumps({"iv": base64.b64encode(iv).decode(), "ct": base64.b64encode(ct).decode(),
+                                    "generated_at": now.isoformat()}), encoding="utf-8")
+
+
+# ---------- 本体 ----------
+def run(now=None, dry=False, only=None):
+    now = now or datetime.now(JST)
+    nm = now_minutes(now)
+    if not (OPEN_MIN <= nm < CLOSE_MIN):
+        print(f"即ヒメ: 営業時間外（{now.strftime('%H:%M')}）なので何もしない")
+        return 0
+    import cti_schedule
+    people, head = cti_schedule.read_today(now)
+    print(f"即ヒメ: CTI {head} → {cti_schedule.summary(people)}")
+    unknown = sorted({b for p in cti_schedule.LAST_BADGES if b not in cti_schedule.SHOP_BADGE}) if hasattr(cti_schedule, "LAST_BADGES") else []
+    if unknown:
+        print("  店の印で読めないもの:", unknown)
+    entries = load_log() if not dry else []
+    new = []
+    for shopdir, label in SHOPS.items():
+        if only and shopdir not in only:
+            continue
+        mine = [p for p in people if p["shop"] == shopdir]
+        if not mine:
+            print(f"  {label}: CTIに今日の子がいない")
+            continue
+        try:
+            a, p, d = load_credentials(shopdir)
+            cli = HeavenClient(a, p, direct=d)
+            cli.login_and_select(shopdir)
+            r = cli._get(f"/C9StandbyGirlList.php?shopdir={shopdir}")
+            boxes, hidden, hours = parse_standby(r.text)
+        except Exception as e:
+            print(f"  {label}: ヘブンが読めない {type(e).__name__}")
+            continue
+        pm = match(boxes, mine)
+        lead = LEAD_MIN.get(shopdir, LEAD_DEFAULT)
+        n_set = n_skip = n_nomatch = 0
+        for b in boxes:
+            person = pm.get(b["id"])
+            if person is None and not b["serving"]:
+                n_nomatch += 1
+            dec = decide(b, person, nm, lead)
+            if dec is None:
+                n_skip += 1
+                continue
+            end_min, why = dec
+            if end_min <= nm:
+                n_skip += 1
+                continue
+            end_text = time_for_form(end_min, hours)
+            entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": b["name"], "id": b["id"],
+                     "before": "待機中" if b["waiting"] else "（状態なし）", "end": end_text, "why": why,
+                     "cti": [(hhmm(x["s"]) + "-" + hhmm(x["e"]) + ("/".join([""] + x["flags"]) if x["flags"] else "")) for x in person["bookings"]],
+                     "work": (hhmm(person["work"][0]) + "-" + hhmm(person["work"][1])) if person.get("work") else ""}
+            if dry:
+                entry["ok"] = None
+                entry["note"] = "見るだけ"
+            else:
+                ok, note = set_serving(cli, shopdir, b, hidden, end_text)
+                entry["ok"], entry["note"] = ok, note
+                time.sleep(1.0)
+            new.append(entry)
+            n_set += 1
+        print(f"  {label}: 箱{len(boxes)} → 直した{n_set}・そのまま{n_skip}・CTIに名前が無い{n_nomatch}" + (f"（時の選択肢 {hours[:3]}…{hours[-2:]}）" if hours else "（時の選択肢が読めない）"))
+    if dry:
+        for e in new:
+            print("   ", e["shop"], "＊" * min(len(e["name"]), 4), e["before"], "→ 接客中", e["end"], e["why"])
+        return 0
+    if new:
+        save_log(entries + new, now)
+        print(f"即ヒメ: {len(new)}人に時間を付けた（失敗 {sum(1 for e in new if not e['ok'])}）")
+    else:
+        print("即ヒメ: 直す子はいなかった")
+    return 0
+
+
+if __name__ == "__main__":
+    dry = "--dry" in sys.argv
+    only = [a for a in sys.argv[1:] if not a.startswith("--")] or None
+    try:
+        raise SystemExit(run(dry=dry, only=only))
+    except Exception as e:
+        print(f"即ヒメ: 失敗 {type(e).__name__}: {str(e)[:200]}")
+        raise SystemExit(1)
