@@ -10,8 +10,9 @@
        ・仮予約も仕事として数える。「終了」が付いた箱は終わった仕事
   4. 時間を付けた子だけ記録に残す（out/sokuhime.enc.json。名前を含むので暗号化。ボードで見る）
 
-送り方は画面のJS（sokuhimeCMS.js）と同じ：sokuhimeForm に c_member_id / checkFlg=true / update=接客 / servingEndTime=HH:MM を入れて送る。
-送った後にもう一度ページを読み、本当に接客中になったかを確かめる（なっていなければ「失敗」と記録）。
+送り方は人と同じ（ブラウザ）：接客中ボタン（img.servingEndTime）を押す → 出てくる窓で時（#servingEndHourList）・分（#servingEndMinuteList）を選ぶ → OK（#popup_ok）。
+裏からフォームを送る形（HTTP POST）は 10/10 の本番1回目で保存されなかった（出勤上げと同じ）ので使わない。
+押した後にもう一度ページを読み、本当に接客中になったかを確かめる（なっていなければ「失敗」と記録）。
 """
 import base64
 import json
@@ -26,7 +27,8 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-from heaven_http import BASE, HeavenClient, load_credentials
+from heaven_http import BASE
+from shift_auto import login as browser_login
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
@@ -143,24 +145,41 @@ def match(boxes, people):
     return out
 
 
-# ---------- ヘブンに送る ----------
-def set_serving(cli, shopdir, box, hidden, end_text):
-    data = dict(hidden)
-    data.update({"c_member_id": box["id"], "girls_name": box["name"], "checkFlg": "true",
-                 "update": "接客", "servingEndTime": end_text})
-    url = f"{BASE}/C9StandbyGirlList.php?shopdir={shopdir}"
-    r = cli.s.post(url + "#TopAnchor", data=data, timeout=30, headers={"Referer": url})
-    r.encoding = "utf-8"
-    if r.status_code != 200:
-        return False, f"HTTP {r.status_code}"
-    r = cli._get(f"/C9StandbyGirlList.php?shopdir={shopdir}")
-    boxes, _, _ = parse_standby(r.text)
+# ---------- ヘブンに送る（ブラウザで、人と同じ所を押す） ----------
+def standby_url(shopdir):
+    return f"{BASE}/C9StandbyGirlList.php?shopdir={shopdir}"
+
+
+def read_standby(page, shopdir):
+    page.goto(standby_url(shopdir), wait_until="domcontentloaded")
+    page.wait_for_timeout(1200)
+    return parse_standby(page.content())
+
+
+def set_serving(page, shopdir, box, end_text):
+    """接客中ボタン → 時・分を選ぶ → OK。返す: (本当に接客中になったか, メモ)。"""
+    hh, mm = end_text.split(":")
+    btn = page.query_selector(f'img.servingEndTime[id="{box["id"]}"]')
+    if btn is None:
+        return False, "接客中ボタンが見つからない"
+    btn.click()
+    try:
+        page.wait_for_selector("#servingEndHourList", state="visible", timeout=8000)
+    except Exception:
+        return False, "時間の入力窓が開かない"
+    page.select_option("#servingEndHourList", hh)
+    page.select_option("#servingEndMinuteList", mm)
+    page.wait_for_timeout(300)
+    with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
+        page.click("#popup_ok")
+    page.wait_for_timeout(1000)
+    boxes, _, _ = read_standby(page, shopdir)
     after = next((b for b in boxes if b["id"] == box["id"]), None)
     if after is None:
-        return False, "送った後に箱が見つからない"
+        return False, "押した後に箱が見つからない"
     if after["serving"]:
         return True, after["end"]
-    return False, "送ったが接客中にならなかった"
+    return False, "押したが接客中にならなかった"
 
 
 # ---------- 記録（名前を含むので暗号化） ----------
@@ -239,6 +258,9 @@ def run(now=None, dry=False, only=None):
         badge_check(people, now)
     entries = load_log() if not dry else []
     new = []
+    from playwright.sync_api import sync_playwright
+    pw = sync_playwright().start()
+    browser = pw.chromium.launch(headless=True)
     for shopdir, label in SHOPS.items():
         if only and shopdir not in only:
             continue
@@ -248,11 +270,10 @@ def run(now=None, dry=False, only=None):
             print(f"  {label}: CTIに今日の子がいない")
             continue
         try:
-            a, p, d = load_credentials(shopdir)
-            cli = HeavenClient(a, p, direct=d)
-            cli.login_and_select(shopdir)
-            r = cli._get(f"/C9StandbyGirlList.php?shopdir={shopdir}")
-            boxes, hidden, hours = parse_standby(r.text)
+            page = browser.new_context(locale="ja-JP", viewport={"width": 1300, "height": 1000}).new_page()
+            if not browser_login(page, shopdir):
+                raise RuntimeError("ログインできない")
+            boxes, hidden, hours = read_standby(page, shopdir)
         except Exception as e:
             print(f"  {label}: ヘブンが読めない {type(e).__name__}")
             continue
@@ -280,12 +301,18 @@ def run(now=None, dry=False, only=None):
                 entry["ok"] = None
                 entry["note"] = "見るだけ"
             else:
-                ok, note = set_serving(cli, shopdir, b, hidden, end_text)
+                try:
+                    ok, note = set_serving(page, shopdir, b, end_text)
+                except Exception as e:
+                    ok, note = False, f"押せなかった {type(e).__name__}"
                 entry["ok"], entry["note"] = ok, note
                 time.sleep(1.0)
             new.append(entry)
             n_set += 1
         print(f"  {label}: 箱{len(boxes)} → 直した{n_set}・そのまま{n_skip}・CTIに名前が無い{n_nomatch}" + (f"（時の選択肢 {hours[:3]}…{hours[-2:]}）" if hours else "（時の選択肢が読めない）"))
+        page.context.close()
+    browser.close()
+    pw.stop()
     if dry:
         for e in new:
             print("   ", e["shop"], "＊" * min(len(e["name"]), 4), e["before"], "→ 接客中", e["end"], e["why"])
