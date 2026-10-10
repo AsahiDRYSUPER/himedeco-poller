@@ -210,7 +210,71 @@ class CTI:
             page.wait_for_timeout(800)
         return out
 
+    def mark_timed_quick(self, rid, save=True, now=None):
+        """右クリックの簡易窓で、プレイ状況の「時間付け」にチェック → 更新（一希さん 10/10「右クリックで簡易的に変えれる」）。返す: (できたか, メモ)。"""
+        page = self.page
+        if not rid:
+            return False, "箱のIDが無い"
+        page.keyboard.press("Escape")
+        try:
+            self.read(now)
+        except Exception as e:
+            return False, f"開き直せない {type(e).__name__}"
+        box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
+        if box.count() == 0:
+            return False, "箱が見つからない"
+        box.first.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
+        page.wait_for_timeout(400)
+        box.first.click(button="right", timeout=8000)
+        # 簡易窓：見えている radio のうち、横の文字が「時間付け」のもの
+        found = None
+        for _ in range(20):
+            page.wait_for_timeout(300)
+            found = page.evaluate("""() => {
+              const rs = Array.from(document.querySelectorAll('input[type=radio]')).filter(r => r.getClientRects().length);
+              const r = rs.find(r => /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || ''));
+              return r ? {checked: r.checked, n: rs.length} : null;
+            }""")
+            if found:
+                break
+        if not found:
+            page.keyboard.press("Escape")
+            return False, "簡易窓に時間付けの選択肢が出ない"
+        upd = page.locator("button:has-text('更新')").filter(has_text=re.compile(r"^\s*更新\s*$"))
+        vis = [upd.nth(i) for i in range(upd.count()) if upd.nth(i).is_visible()]
+        if not vis:
+            page.keyboard.press("Escape")
+            return False, "簡易窓の更新ボタンが見えない"
+        if not save:
+            page.keyboard.press("Escape")
+            return True, "簡易窓で更新の手前まで通った（確かめ）"
+        page.evaluate("""() => { const rs = Array.from(document.querySelectorAll('input[type=radio]')).filter(r => r.getClientRects().length);
+          const r = rs.find(r => /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || '')); if (r) r.click(); }""")
+        page.wait_for_timeout(300)
+        page.once("dialog", lambda d: d.accept())
+        vis[-1].click()
+        page.wait_for_timeout(2500)
+        page.keyboard.press("Escape")
+        for _ in range(6):
+            time.sleep(1.0)
+            b2 = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
+            txt = b2.first.inner_text() if b2.count() else ""
+            if "時間付け" in txt:
+                return True, "時間付け（簡易窓）"
+        return False, "更新したが時間付けの印が付かない"
+
     def mark_timed(self, rid, save=True, now=None):
+        """まず右クリックの簡易窓で。だめなら大きな窓（編集→保存）で。"""
+        try:
+            ok, note = self.mark_timed_quick(rid, save=save, now=now)
+        except Exception as e:
+            ok, note = False, f"簡易窓で押せなかった {type(e).__name__} {str(e)[:60]}"
+        if ok:
+            return ok, note
+        ok2, note2 = self.mark_timed_big(rid, save=save, now=now)
+        return ok2, f"{note2}（簡易窓: {note}）"
+
+    def mark_timed_big(self, rid, save=True, now=None):
         """その予約のプレイ状況を「時間付け」にして保存する。返す: (できたか, メモ)。
         人と同じ押し方：箱をダブルクリック → 大きな窓 →「編集」→ ﾌﾟﾚｲ状況 → 保存。他の欄は触らない。
         save=False は確かめ用（保存の手前まで行って閉じる）。"""
