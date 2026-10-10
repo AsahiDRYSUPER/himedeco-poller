@@ -242,8 +242,9 @@ def run(now=None, dry=False, only=None):
     for shopdir, label in SHOPS.items():
         if only and shopdir not in only:
             continue
-        mine = [p for p in people if p["shop"] == shopdir]
-        if not mine:
+        # 店の印が無い子（複数の店に出ている子。印が「4」「1」など）は、どの店でも名前で突き合わせる
+        mine = [p for p in people if p["shop"] == shopdir] + [p for p in people if p["shop"] is None]
+        if not [p for p in mine if p["shop"] == shopdir]:
             print(f"  {label}: CTIに今日の子がいない")
             continue
         try:
