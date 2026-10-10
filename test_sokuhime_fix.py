@@ -47,6 +47,13 @@ assert S.decide(w, p, 17 * 60 + 20, 30) is None                       # とろ�
 assert S.decide(boxes[1], p, 15 * 60 + 10, 60) is None                # 接客中の子には触らない
 assert S.decide(w, None, 15 * 60, 60) is None
 
+# 入室なのに時間付けが無い
+q = {"name": "x", "work": (600, 1500), "bookings": [{"s": 795, "e": 975, "flags": ["入室"], "rid": "r1"}]}
+assert S.timed_fix(q, 800)["rid"] == "r1"
+assert S.timed_fix({"name": "x", "bookings": [{"s": 795, "e": 975, "flags": ["入室", "時間付け"], "rid": "r1"}]}, 800) is None
+assert S.timed_fix({"name": "x", "bookings": [{"s": 795, "e": 975, "flags": ["入室", "終了"], "rid": "r1"}]}, 800) is None
+assert S.timed_fix(q, 980) is None and S.timed_fix(None, 800) is None
+
 # 名前の突き合わせ
 m = S.match(boxes, [p, {"name": "花子", "work": None, "bookings": []}])
 assert m["111"] is p and m["222"]["name"] == "花子"

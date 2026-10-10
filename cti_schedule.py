@@ -1,12 +1,16 @@
-"""CTI（風俗CTIv2）の「本日スケジュール」を読む（読むだけ。CTIは何も書き換えない）。
+"""CTI（風俗CTIv2）の「本日スケジュール」を読む。書くのは「プレイ状況を時間付けにする」だけ（mark_timed）。
 
 なぜ：ヘブンの即ヒメで「待機中なのに、本当は接客中」の子を自動で直すため（一希さん 2026-10-09）。
+      10/10 追加：女子状況が「入室」なのにプレイ状況が「時間付け」でない予約は、ヘブンの終了時刻をCTIの終了時刻に合わせ、
+      CTIのプレイ状況を「時間付け」にして保存する（一希さん）。
 どう読むか：人と同じようにブラウザでCTIを開いてログインし（金庫 CTI_LOGIN_URL・CTI_PASSWORD）、
   本日スケジュール（#<事業所>/schedule?date=YYYYMMDD）の画面に出ている
-    行（.schedule-row）：女の子の名前（.hime-name）・出勤時間（.work-time 例「10:00-翌3:00Up」）・店の印（.hime-badge「KG」「OR」…）
-    予約の箱（.resv-item）：時刻（.resv-time 例「13:25-15:55」「翌0:30-翌2:30」）・印（.mark-badge「入室」「終了」「仮予約」…）
+    行（.schedule-row）：女の子の名前（.hime-name）・出勤時間（.work-time 例「10:00-翌3:00Up」）・印（.hime-badge）
+    予約の箱（.resv-item）：時刻（.resv-time 例「13:25-15:55」「翌0:30-翌2:30」）・印（.mark-badge「入室」「終了」「仮予約」「時間付け」…）
   を読む。箱は行の外に重ねて描かれているので、行との対応は縦の位置で取る（10/9 の下調べ）。
-返す形：[{"shop": shopdir, "name": 名前, "work": (開始分, 終了分), "bookings": [{"s": 開始分, "e": 終了分, "flags": ["入室"...]}]}]
+どう書くか（10/10 下調べ9）：箱をダブルクリック → 大きな窓（受領・編集）→「編集」→ 編集の形（.resv-edit-container）の
+  「ﾌﾟﾚｲ状況」の select（選択肢に「時間付け」がある。値 6）を時間付けにする → 下の「保存」（.modal-footer .btn-green）。
+返す形：[{"shop": shopdir, "name": 名前, "work": (開始分, 終了分), "bookings": [{"s": 開始分, "e": 終了分, "flags": [...], "rid": 箱のID}]}]
   分は「その日の 0:00 からの分」。翌0:30 は 24*60+30。
 公開リポジトリなので、名前や時刻はログに出さない（出すのは店ごとの人数と件数だけ）。
 """
@@ -20,11 +24,12 @@ OFFICE = os.environ.get("CTI_OFFICE", "T5GFow")
 OFFICE_URL = f"https://cti2.fuzoku-fan.jp/office/#{OFFICE}"
 # 行の印は「待機場所（事務所・街角・寮(セント)・車待機(プラッツ)…）」「出勤・当欠・出確なし」「報酬:◯円」「タグ（ロリ・ギャル…）」と
 # 2文字の店の印が混ざっている。店は2文字の印だけで決める（10/10 の見るだけ実行で分かった。「街角」は待機場所であって店ではない）。
-# 印→店の対応は、見るだけ実行でヘブンの出勤一覧の名前と突き合わせて確かめる（MK=街角 は名前の突き合わせで確認する）
+# 印→店の対応は、ヘブンの出勤一覧の名前と突き合わせて確認済み（10/10：街角15/15・とろ〜り6/6・VENUS7/7・UC2/2・キラ学20/24・オレンジ15/16・ぽちゃ12/13）
 SHOP_BADGE = {"KG": "cg_kirakira", "OR": "mrs_orange", "PO": "potya_reen", "MK": "s_matikado",
               "TO": "torori_angel", "VE": "venus_okayama", "UC": "undercover"}
 LAST_BADGES = set()
 ROW_BADGES = []          # (店, 行の印の組) 店の印の当て方を確かめる用（名前は入れない）
+FLAG_WORDS = ("入室", "終了", "仮予約", "予約", "本", "時間付け")
 
 
 def badge_shop(badges):
@@ -43,8 +48,10 @@ READ_JS = r"""() => {
   }).filter(x => x.name);
   const items = Array.from(document.querySelectorAll('.resv-item')).map(it => {
     const r = it.getBoundingClientRect();
+    const host = it.closest('apo-resv');
     return {y: (r.top + r.bottom) / 2, time: (it.querySelector('.resv-time') || {innerText: ''}).innerText.trim(),
-            flags: Array.from(it.querySelectorAll('.mark-badge, .hime-badge')).map(b => b.innerText.trim()), text: (it.innerText || '').slice(0, 200)};
+            flags: Array.from(it.querySelectorAll('.mark-badge, .hime-badge')).map(b => b.innerText.trim()),
+            text: (it.innerText || '').slice(0, 200), rid: host ? (host.getAttribute('resv-id') || '') : ''};
   });
   const head = (document.body.innerText.match(/\d{4}年\d{2}月\d{2}日\([^)]*\)/) || [''])[0];
   return {rows, items, head};
@@ -111,53 +118,126 @@ def parse(raw):
         host = next((o for o in out if o["top"] - 2 <= it["y"] <= o["bottom"] + 2), None)
         if host is None:
             continue
-        flags = [f for f in it["flags"] if f in ("入室", "終了", "仮予約", "予約", "本", "時間付け")]
+        flags = [f for f in it["flags"] if f in FLAG_WORDS]
         text = it.get("text", "")
-        if "入室" in text and "入室" not in flags:
-            flags.append("入室")
-        if "終了" in text and "終了" not in flags:
-            flags.append("終了")
-        host["bookings"].append({"s": sp[0], "e": sp[1], "flags": flags})
+        for w in ("入室", "終了", "時間付け"):
+            if w in text and w not in flags:
+                flags.append(w)
+        host["bookings"].append({"s": sp[0], "e": sp[1], "flags": flags, "rid": it.get("rid", "")})
     for o in out:
         o["bookings"].sort(key=lambda b: b["s"])
         del o["top"], o["bottom"]
     return out, raw.get("head", "")
 
 
-def read_today(now=None):
-    """CTIにログインして本日スケジュールを読む。返す: (女の子の一覧, 見出しの日付)。"""
-    from playwright.sync_api import sync_playwright
-    password = os.environ.get("CTI_PASSWORD", "").strip("\r\n")
-    login_url = os.environ.get("CTI_LOGIN_URL", "").strip()
-    if not password or not login_url.startswith("https://cti2.fuzoku-fan.jp/"):
-        # 中身は出さない。どちらがおかしいかだけ分かるようにする
-        hint = (f"パスワード{len(password)}字、URL{len(login_url)}字"
-                f"（https始まり:{login_url.startswith('https://')} / cti2を含む:{'cti2.fuzoku-fan.jp' in login_url}）")
-        raise RuntimeError("CTI_PASSWORD / CTI_LOGIN_URL が無いか形が違う: " + hint)
-    now = now or datetime.now(JST)
-    # 営業日は 10時〜翌2時。深夜 0〜5時は前の日のスケジュールを見る
-    day = now - timedelta(hours=5)
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_context(locale="ja-JP", timezone_id="Asia/Tokyo", viewport={"width": 1600, "height": 1200}).new_page()
+def business_day(now):
+    """営業日は 10時〜翌2時。深夜 0〜5時は前の日のスケジュールを見る。"""
+    return now - timedelta(hours=5)
+
+
+class CTI:
+    """ブラウザでCTIを開いたまま使う（読む→必要なら時間付けを書く→閉じる）。"""
+
+    def __init__(self):
+        self.pw = self.browser = self.page = None
+
+    def open(self):
+        from playwright.sync_api import sync_playwright
+        password = os.environ.get("CTI_PASSWORD", "").strip("\r\n")
+        login_url = os.environ.get("CTI_LOGIN_URL", "").strip()
+        if not password or not login_url.startswith("https://cti2.fuzoku-fan.jp/"):
+            hint = (f"パスワード{len(password)}字、URL{len(login_url)}字"
+                    f"（https始まり:{login_url.startswith('https://')} / cti2を含む:{'cti2.fuzoku-fan.jp' in login_url}）")
+            raise RuntimeError("CTI_PASSWORD / CTI_LOGIN_URL が無いか形が違う: " + hint)
+        self.pw = sync_playwright().start()
+        self.browser = self.pw.chromium.launch(headless=True)
+        self.page = self.browser.new_context(locale="ja-JP", timezone_id="Asia/Tokyo", viewport={"width": 1600, "height": 1200}).new_page()
+        login(self.page, login_url, password)
+        return self
+
+    def close(self):
         try:
-            login(page, login_url, password)
-            page.evaluate(f"location.hash = '#{OFFICE}/schedule?date={day.strftime('%Y%m%d')}'")
-            raw = None
-            for _ in range(30):
-                time.sleep(0.5)
-                raw = page.evaluate(READ_JS)
-                if raw["rows"] and raw["head"].startswith(day.strftime("%Y年%m月%d日")):
-                    time.sleep(1.0)
-                    raw2 = page.evaluate(READ_JS)
-                    if len(raw2["items"]) == len(raw["items"]):
-                        raw = raw2
-                        break
-            if not raw or not raw["rows"]:
-                raise RuntimeError("本日スケジュールの行が出ない")
+            if self.browser:
+                self.browser.close()
         finally:
-            browser.close()
-    return parse(raw)
+            if self.pw:
+                self.pw.stop()
+
+    def read(self, now=None):
+        """本日スケジュールを読む。返す: (女の子の一覧, 見出しの日付)。"""
+        page = self.page
+        day = business_day(now or datetime.now(JST))
+        page.evaluate(f"location.hash = '#{OFFICE}/schedule?date={day.strftime('%Y%m%d')}'")
+        raw = None
+        for _ in range(30):
+            time.sleep(0.5)
+            raw = page.evaluate(READ_JS)
+            if raw["rows"] and raw["head"].startswith(day.strftime("%Y年%m月%d日")):
+                time.sleep(1.0)
+                raw2 = page.evaluate(READ_JS)
+                if len(raw2["items"]) == len(raw["items"]):
+                    raw = raw2
+                    break
+        if not raw or not raw["rows"]:
+            raise RuntimeError("本日スケジュールの行が出ない")
+        return parse(raw)
+
+    def mark_timed(self, rid):
+        """その予約のプレイ状況を「時間付け」にして保存する。返す: (できたか, メモ)。
+        人と同じ押し方：箱をダブルクリック → 大きな窓 →「編集」→ ﾌﾟﾚｲ状況 → 保存。他の欄は触らない。"""
+        page = self.page
+        if not rid:
+            return False, "箱のIDが無い"
+        box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
+        if box.count() == 0:
+            return False, "箱が見つからない"
+        page.keyboard.press("Escape")
+        box.first.dblclick()
+        try:
+            page.wait_for_selector("button.btn-detail:has-text('編集')", state="visible", timeout=10000)
+        except Exception:
+            return False, "予約の窓が開かない"
+        edits = page.locator("button.btn-detail:has-text('編集')")
+        vis = [edits.nth(i) for i in range(edits.count()) if edits.nth(i).is_visible()]
+        if not vis:
+            return False, "編集ボタンが見えない"
+        vis[-1].click()
+        try:
+            page.wait_for_selector(".resv-edit-container select", state="visible", timeout=10000)
+        except Exception:
+            return False, "編集の形が開かない"
+        sel = page.locator(".resv-edit-container select").filter(has=page.locator("option", has_text="時間付け"))
+        if sel.count() == 0:
+            page.keyboard.press("Escape")
+            return False, "ﾌﾟﾚｲ状況の欄が見つからない"
+        value = sel.first.evaluate("s => Array.from(s.options).find(o => /時間付け/.test(o.text)).value")
+        sel.first.select_option(value)
+        page.wait_for_timeout(300)
+        page.once("dialog", lambda d: d.accept())
+        save = page.locator(".modal-footer button.btn-green:has-text('保存')")
+        if save.count() == 0:
+            page.keyboard.press("Escape")
+            return False, "保存ボタンが見つからない"
+        save.first.click()
+        page.wait_for_timeout(3000)
+        page.keyboard.press("Escape")
+        # 保存できたかは、箱に「時間付け」の印が付いたかで確かめる
+        for _ in range(6):
+            time.sleep(1.0)
+            b2 = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
+            txt = b2.first.inner_text() if b2.count() else ""
+            if "時間付け" in txt:
+                return True, "時間付け"
+        return False, "保存したが時間付けの印が付かない"
+
+
+def read_today(now=None):
+    """CTIにログインして本日スケジュールを読むだけ（開いて・読んで・閉じる）。"""
+    c = CTI().open()
+    try:
+        return c.read(now)
+    finally:
+        c.close()
 
 
 def summary(people):

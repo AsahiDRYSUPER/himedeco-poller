@@ -8,6 +8,9 @@
        ・今まさに仕事の最中（「終了」が付いていない箱）  → 接客中、終了＝その箱の終了時刻
        ・60分以内（とろ〜りは30分以内）に仕事が始まる    → 接客中、終了＝その箱の終了時刻
        ・仮予約も仕事として数える。「終了」が付いた箱は終わった仕事
+  3b. 追加（10/10 一希さん）：箱に「入室」が付いているのに「時間付け」が無い予約は、まだ入室後の時間付けが済んでいない。
+       → ヘブンの終了時刻をCTIの箱の終了時刻に合わせ（接客中の子でもこの時だけは時刻を直す）、
+         CTIのその予約のプレイ状況を「時間付け」にして保存する（CTIに書くのはこれだけ）
   4. 時間を付けた子だけ記録に残す（out/sokuhime.enc.json。名前を含むので暗号化。ボードで見る）
 
 送り方は人と同じ（ブラウザ）：接客中ボタン（img.servingEndTime）を押す → 出てくる窓で時（#servingEndHourList）・分（#servingEndMinuteList）を選ぶ → OK（#popup_ok）。
@@ -149,6 +152,16 @@ def decide(box, person, now_min, lead):
     return None
 
 
+def timed_fix(person, now_min):
+    """「入室」なのに「時間付け」が無い予約（終了していない・まだ終わっていない）→ その予約。無ければ None。"""
+    if person is None:
+        return None
+    for b in person.get("bookings", []):
+        if "入室" in b["flags"] and "時間付け" not in b["flags"] and "終了" not in b["flags"] and b["e"] > now_min:
+            return b
+    return None
+
+
 def match(boxes, people):
     """ヘブンの箱 → CTIの人。名前を正規化して突き合わせる（前方一致も許す）。"""
     by = {}
@@ -271,7 +284,16 @@ def run(now=None, dry=False, only=None):
         print(f"即ヒメ: 営業時間外（{now.strftime('%H:%M')}）なので何もしない")
         return 0
     import cti_schedule
-    people, head = cti_schedule.read_today(now)
+    cti = cti_schedule.CTI().open()
+    try:
+        return _run(cti, now, nm, dry, only)
+    finally:
+        cti.close()
+
+
+def _run(cti, now, nm, dry, only):
+    import cti_schedule
+    people, head = cti.read(now)
     print(f"即ヒメ: CTI {head} → {cti_schedule.summary(people)}")
     unknown = sorted({b for b in cti_schedule.LAST_BADGES if b not in cti_schedule.SHOP_BADGE}) if hasattr(cti_schedule, "LAST_BADGES") else []
     if dry:
@@ -295,7 +317,6 @@ def run(now=None, dry=False, only=None):
             cli = HeavenClient(a, p_, direct=d)
             cli.login_and_select(shopdir)
             boxes, hidden, hours = parse_standby(cli._get(f"/C9StandbyGirlList.php?shopdir={shopdir}").text)
-            page = None
         except Exception as e:
             print(f"  {label}: ヘブンが読めない {type(e).__name__} {str(e)[:120]}")
             continue
@@ -305,10 +326,49 @@ def run(now=None, dry=False, only=None):
         pm = match(boxes, mine)
         lead = LEAD_MIN.get(shopdir, LEAD_DEFAULT)
         n_set = n_skip = n_nomatch = 0
+        def ensure_page():
+            if st["page"] is None:
+                if browser_logins:
+                    time.sleep(BROWSER_GAP_SEC)
+                st["page"] = browser.new_context(locale="ja-JP", viewport={"width": 1300, "height": 1000}).new_page()
+                heaven_login(st["page"], shopdir)
+                browser_logins.append(shopdir)
+                read_standby(st["page"], shopdir)
+            return st["page"]
+
+        st = {"page": None}
         for b in boxes:
             person = pm.get(b["id"])
             if person is None and not b["serving"]:
                 n_nomatch += 1
+            tb = timed_fix(person, nm)
+            if tb is not None:
+                # 入室なのに時間付けが無い：ヘブンの終了をCTIの終了に合わせ、CTIを時間付けにする
+                end_text = time_for_form(tb["e"], hours)
+                entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": b["name"], "id": b["id"], "kind": "時間付け",
+                         "before": ("接客中 " + b["end"]) if b["serving"] else ("待機中" if b["waiting"] else "（状態なし）"),
+                         "end": end_text, "why": "入室・時間付けがまだ",
+                         "cti": [(hhmm(x["s"]) + "-" + hhmm(x["e"]) + ("/".join([""] + x["flags"]) if x["flags"] else "")) for x in person["bookings"]],
+                         "work": (hhmm(person["work"][0]) + "-" + hhmm(person["work"][1])) if person.get("work") else ""}
+                if dry:
+                    entry.update(ok=None, note="見るだけ", cti_ok=None, cti_note="見るだけ")
+                else:
+                    if b["serving"] and b["end"] == end_text:
+                        ok, note = True, "ヘブンは同じ時刻"
+                    else:
+                        try:
+                            ok, note = set_serving(ensure_page(), shopdir, b, end_text)
+                        except Exception as e:
+                            ok, note = False, f"押せなかった {type(e).__name__} {str(e)[:80]}"
+                    try:
+                        cti_ok, cti_note = cti.mark_timed(tb["rid"])
+                    except Exception as e:
+                        cti_ok, cti_note = False, f"CTIで押せなかった {type(e).__name__} {str(e)[:80]}"
+                    entry.update(ok=ok, note=note, cti_ok=cti_ok, cti_note=cti_note)
+                    time.sleep(1.0)
+                new.append(entry)
+                n_set += 1
+                continue
             dec = decide(b, person, nm, lead)
             if dec is None:
                 n_skip += 1
@@ -327,14 +387,7 @@ def run(now=None, dry=False, only=None):
                 entry["note"] = "見るだけ"
             else:
                 try:
-                    if page is None:
-                        if browser_logins:
-                            time.sleep(BROWSER_GAP_SEC)
-                        page = browser.new_context(locale="ja-JP", viewport={"width": 1300, "height": 1000}).new_page()
-                        heaven_login(page, shopdir)
-                        browser_logins.append(shopdir)
-                        read_standby(page, shopdir)
-                    ok, note = set_serving(page, shopdir, b, end_text)
+                    ok, note = set_serving(ensure_page(), shopdir, b, end_text)
                 except Exception as e:
                     ok, note = False, f"押せなかった {type(e).__name__} {str(e)[:80]}"
                 entry["ok"], entry["note"] = ok, note
@@ -342,17 +395,17 @@ def run(now=None, dry=False, only=None):
             new.append(entry)
             n_set += 1
         print(f"  {label}: 箱{len(boxes)} → 直した{n_set}・そのまま{n_skip}・CTIに名前が無い{n_nomatch}" + (f"（時の選択肢 {hours[:3]}…{hours[-2:]}）" if hours else "（時の選択肢が読めない）"))
-        if page is not None:
-            page.context.close()
+        if st["page"] is not None:
+            st["page"].context.close()
     browser.close()
     pw.stop()
     if dry:
         for e in new:
-            print("   ", e["shop"], "＊" * min(len(e["name"]), 4), e["before"], "→ 接客中", e["end"], e["why"])
+            print("   ", e["shop"], "＊" * min(len(e["name"]), 4), e["before"], "→ 接客中", e["end"], e["why"], ("＋CTIを時間付けに" if e.get("kind") == "時間付け" else ""))
         return 0
     if new:
         save_log(entries + new, now)
-        print(f"即ヒメ: {len(new)}人に時間を付けた（失敗 {sum(1 for e in new if not e['ok'])}）")
+        print(f"即ヒメ: {len(new)}人に時間を付けた（失敗 {sum(1 for e in new if not e['ok'])}、CTIの時間付け {sum(1 for e in new if e.get('cti_ok'))}/{sum(1 for e in new if e.get('kind') == '時間付け')}）")
     else:
         print("即ヒメ: 直す子はいなかった")
     return 0
