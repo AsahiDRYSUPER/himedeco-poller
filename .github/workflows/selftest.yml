@@ -3,7 +3,12 @@ name: selftest
 # 出勤の自動上げの部品が動くかを確かめる（書き込みはしない）。手で起動した時だけ動く。
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      live_shop:
+        description: "即ヒメ直しを本番で1店だけ今すぐ動かす（shopdir。例 torori_angel。空なら見るだけ）"
+        type: string
+        default: ""
 
 jobs:
   test:
@@ -33,7 +38,9 @@ jobs:
           CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
           CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
-        run: python3 sokuhime_fix.py --dry
+          TODO_KEY: ${{ secrets.TODO_KEY }}
+        run: |
+          if [ -n "${{ inputs.live_shop }}" ]; then python3 sokuhime_fix.py "${{ inputs.live_shop }}"; else python3 sokuhime_fix.py --dry; fi
       - name: ブラウザでログインして出勤登録の画面が開けるか
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
