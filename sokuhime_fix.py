@@ -209,8 +209,11 @@ def run(now=None, dry=False, only=None):
     people, head = cti_schedule.read_today(now)
     print(f"即ヒメ: CTI {head} → {cti_schedule.summary(people)}")
     unknown = sorted({b for b in cti_schedule.LAST_BADGES if b not in cti_schedule.SHOP_BADGE}) if hasattr(cti_schedule, "LAST_BADGES") else []
-    if unknown:
-        print("  店の印で読めないもの:", unknown)
+    if dry and getattr(cti_schedule, "ROW_BADGES", None):
+        from collections import Counter
+        combos = Counter(cti_schedule.ROW_BADGES)
+        for (shop, badges), n in sorted(combos.items(), key=lambda kv: (str(kv[0][0]), -kv[1])):
+            print(f"  店の印の当て方: {shop or '?'} ← {list(badges)} ×{n}")
     entries = load_log() if not dry else []
     new = []
     for shopdir, label in SHOPS.items():

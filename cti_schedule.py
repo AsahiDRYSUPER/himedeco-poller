@@ -25,6 +25,7 @@ SHOP_BADGE = {"KG": "cg_kirakira", "OR": "mrs_orange", "UC": "undercover", "VE":
 SHOP_HINT = (("ぽちゃ", "potya_reen"), ("街", "s_matikado"), ("とろ", "torori_angel"), ("トロ", "torori_angel"),
              ("キラ", "cg_kirakira"), ("オレ", "mrs_orange"), ("アンカバ", "undercover"), ("UNDER", "undercover"), ("VENUS", "venus_okayama"))
 LAST_BADGES = set()
+ROW_BADGES = []          # (店, 行の印の組) 店の印の当て方を確かめる用（名前は入れない）
 
 
 def badge_shop(badges):
@@ -105,6 +106,7 @@ def parse(raw):
     for r in rows:
         LAST_BADGES.update(b for b in r["badges"] if b and len(b) <= 6)
         shop = badge_shop(r["badges"])
+        ROW_BADGES.append((shop, tuple(r["badges"][:3])))
         out.append({"shop": shop, "name": r["name"], "work": span(r["work"]), "top": r["top"], "bottom": r["bottom"], "bookings": []})
     for it in raw["items"]:
         sp = span(it["time"])
