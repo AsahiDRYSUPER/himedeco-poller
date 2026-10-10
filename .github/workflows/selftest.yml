@@ -40,7 +40,7 @@ jobs:
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
           TODO_KEY: ${{ secrets.TODO_KEY }}
         run: |
-          if [ -n "${{ inputs.live_shop }}" ]; then python3 sokuhime_fix.py "${{ inputs.live_shop }}"; else python3 sokuhime_fix.py --dry; fi
+          if [ -n "${{ inputs.live_shop }}" ]; then python3 sokuhime_fix.py --dry "${{ inputs.live_shop }}" && python3 sokuhime_fix.py "${{ inputs.live_shop }}"; else python3 sokuhime_fix.py --dry; fi
       - name: ブラウザでログインして出勤登録の画面が開けるか
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}

@@ -372,6 +372,12 @@ def _run(cti, now, nm, dry, only):
             return st["page"]
 
         st = {"page": None}
+        if dry and only:
+            # 1店だけ見る時は、箱ごとの判断の材料を出す（名前は頭1文字だけ）
+            for b in boxes:
+                pz = pm.get(b["id"])
+                print(f"    箱 {b['name'][:1]}… 出勤{b['shift']} {'接客中' + b['end'] if b['serving'] else ('待機中' if b['waiting'] else '状態なし')}"
+                      f" | CTI: {'なし' if pz is None else (('出勤' + hhmm(pz['work'][0]) + '-' + hhmm(pz['work'][1]) if pz.get('work') else '出勤?') + ' 予約' + str([(hhmm(x['s']) + '-' + hhmm(x['e']) + '/' + '/'.join(x['flags'])) for x in pz['bookings']]))}")
         for b in boxes:
             person = pm.get(b["id"])
             if person is None and not b["serving"]:
