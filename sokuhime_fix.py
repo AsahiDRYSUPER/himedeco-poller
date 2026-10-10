@@ -86,7 +86,9 @@ def parse_standby(html):
     ついでにフォームの隠し項目と、時の選択肢（送る時刻の形を決める）も返す。"""
     s = BeautifulSoup(html, "html.parser")
     boxes = []
-    for t in s.select("table.sokuhimegirlbox2"):
+    # 箱の表は sokuhimegirlbox2（待機中の子）だけでなく、接客中の子は別の名前の表に入っているらしい
+    # （10/10：接客中にした直後に「箱が見つからない」になった）。sokuhimegirlbox で始まる表を全部読む
+    for t in s.find_all("table", class_=re.compile(r"^sokuhimegirlbox")):
         img = t.find("img", class_="servingEndTime")
         if img is None or not img.get("id"):
             continue
@@ -100,7 +102,7 @@ def parse_standby(html):
                 break
         wait = t.find("img", class_="waitingUpdate")
         boxes.append({
-            "id": img["id"], "name": name, "shift": shift,
+            "id": img["id"], "name": name, "shift": shift, "table": " ".join(t.get("class") or []),
             "serving": "sekkyaku_on" in (img.get("src") or ""), "end": (img.get("name") or "").strip(),
             "waiting": bool(wait is not None and "taiki_on" in (wait.get("src") or "")),
         })
@@ -297,6 +299,9 @@ def run(now=None, dry=False, only=None):
         except Exception as e:
             print(f"  {label}: ヘブンが読めない {type(e).__name__} {str(e)[:120]}")
             continue
+        if dry:
+            from collections import Counter
+            print(f"  {label}: 表の種類 {dict(Counter(b['table'] for b in boxes))}、接客中 {sum(1 for b in boxes if b['serving'])}人")
         pm = match(boxes, mine)
         lead = LEAD_MIN.get(shopdir, LEAD_DEFAULT)
         n_set = n_skip = n_nomatch = 0
