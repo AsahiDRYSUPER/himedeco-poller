@@ -8,6 +8,9 @@
        ・今まさに仕事の最中（「終了」が付いていない箱）  → 接客中、終了＝その箱の終了時刻
        ・60分以内（とろ〜りは30分以内）に仕事が始まる    → 接客中、終了＝その箱の終了時刻
        ・仮予約も仕事として数える。「終了」が付いた箱は終わった仕事
+  3c. 追加（10/10 一希さん）：CTIの出勤時間が「〜17:00Up」のように Up 付き＝その時刻には仕事を終えていたい子。
+       付ける終了時刻から上がりまでが60分（いちばん短いコース）より短ければ、次の仕事は入らない＝完売なので、
+       終了時刻は上がりの時刻（ヘブンの退勤時刻以上）にして、ヘブンで「受付終了」にする
   3b. 追加（10/10 一希さん）：箱に「入室」が付いているのに「時間付け」が無い予約は、まだ入室後の時間付けが済んでいない。
        → ヘブンの終了時刻をCTIの箱の終了時刻に合わせ（接客中の子でもこの時だけは時刻を直す）、
          CTIのその予約のプレイ状況を「時間付け」にして保存する（CTIに書くのはこれだけ）
@@ -62,6 +65,7 @@ SHOPS = {
 }
 LEAD_MIN = {"torori_angel": 30}        # 仕事が始まる何分前から接客中にするか（それ以外は60分）
 LEAD_DEFAULT = 60
+MIN_COURSE = 60                         # いちばん短いコース。Up の子は、これより残りが短ければ完売（受付終了）
 OPEN_MIN, CLOSE_MIN = 9 * 60, 26 * 60  # 動く時間帯：9:00〜翌2:00（0:00からの分）
 KEEP_DAYS = 3                           # 記録を残す日数
 
@@ -150,6 +154,28 @@ def decide(box, person, now_min, lead):
         if now_min < b["s"] <= now_min + lead:
             return b["e"], f"{b['s'] - now_min}分後に開始"
     return None
+
+
+def shift_end_min(box):
+    """ヘブンの箱の出勤「12:00-17:00」の終わりの分（翌日は +24h）。読めなければ None。"""
+    m = re.match(r"^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$", box.get("shift") or "")
+    if not m:
+        return None
+    s_, e_ = int(m.group(1)) * 60 + int(m.group(2)), int(m.group(3)) * 60 + int(m.group(4))
+    return e_ + 24 * 60 if e_ <= s_ else e_
+
+
+def final_end(person, box, end_min):
+    """Up の子で、終了から上がりまでが60分未満なら、終了＝上がり（ヘブンの退勤以上）→ 受付終了。返す: (終了の分, 付け足す理由)。"""
+    work = (person or {}).get("work")
+    if not (person and person.get("up") and work):
+        return end_min, ""
+    up = work[1]
+    if up - end_min >= MIN_COURSE:
+        return end_min, ""
+    he = shift_end_min(box)
+    e = max(up, he or 0)
+    return e, f"→受付終了（{hhmm(up)}Upで次が入らない）"
 
 
 def timed_fix(person, now_min):
@@ -343,10 +369,11 @@ def _run(cti, now, nm, dry, only):
             tb = timed_fix(person, nm)
             if tb is not None:
                 # 入室なのに時間付けが無い：ヘブンの終了をCTIの終了に合わせ、CTIを時間付けにする
-                end_text = time_for_form(tb["e"], hours)
+                fe, fwhy = final_end(person, b, tb["e"])
+                end_text = time_for_form(fe, hours)
                 entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": b["name"], "id": b["id"], "kind": "時間付け",
                          "before": ("接客中 " + b["end"]) if b["serving"] else ("待機中" if b["waiting"] else "（状態なし）"),
-                         "end": end_text, "why": "入室・時間付けがまだ",
+                         "end": end_text, "why": "入室・時間付けがまだ" + fwhy,
                          "cti": [(hhmm(x["s"]) + "-" + hhmm(x["e"]) + ("/".join([""] + x["flags"]) if x["flags"] else "")) for x in person["bookings"]],
                          "work": (hhmm(person["work"][0]) + "-" + hhmm(person["work"][1])) if person.get("work") else ""}
                 if dry:
@@ -381,6 +408,8 @@ def _run(cti, now, nm, dry, only):
             if end_min <= nm:
                 n_skip += 1
                 continue
+            end_min, fwhy = final_end(person, b, end_min)
+            why += fwhy
             end_text = time_for_form(end_min, hours)
             entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": b["name"], "id": b["id"],
                      "before": "待機中" if b["waiting"] else "（状態なし）", "end": end_text, "why": why,

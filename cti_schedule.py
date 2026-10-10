@@ -110,7 +110,9 @@ def parse(raw):
         LAST_BADGES.update(b for b in r["badges"] if b and len(b) <= 6)
         shop = badge_shop(r["badges"])
         ROW_BADGES.append((shop, tuple(b for b in r["badges"] if not b.startswith("報酬"))))
-        out.append({"shop": shop, "name": r["name"], "work": span(r["work"]), "top": r["top"], "bottom": r["bottom"], "bookings": []})
+        # 出勤時間の末尾「Up」＝その時刻には仕事を終えていたい（上がり）。無ければ受付の締め（一希さん 10/10）
+        out.append({"shop": shop, "name": r["name"], "work": span(r["work"]), "up": bool(re.search(r"up\s*$", r["work"] or "", re.I)),
+                    "top": r["top"], "bottom": r["bottom"], "bookings": []})
     for it in raw["items"]:
         sp = span(it["time"])
         if sp is None:
