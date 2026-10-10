@@ -57,8 +57,14 @@ assert S.timed_fix(q, 980) is None and S.timed_fix(None, 800) is None
 # 退勤の60分前（とろ〜り30分前）を過ぎたら受付終了
 up = {"name": "x", "work": (12 * 60, 17 * 60), "up": True, "bookings": []}
 bx = {"shift": "12:00-17:00"}
-assert S.final_end(up, bx, 16 * 60 + 9, "mrs_orange") == (17 * 60, "→受付終了（退勤17:00の60分前を過ぎて次が入らない）")
+assert S.final_end(up, bx, 16 * 60 + 9, "mrs_orange") == (17 * 60, "→受付終了（退勤17:00まで60分以下で次が入らない）")
+assert S.final_end(up, bx, 16 * 60, "mrs_orange")[0] == 17 * 60                              # ちょうど60分も入らない
 assert S.final_end(up, bx, 15 * 60 + 50, "mrs_orange") == (15 * 60 + 50, "")                 # 70分残る → そのまま
+an = {"name": "a", "work": (10 * 60, 24 * 60), "bookings": [
+    {"s": 17 * 60 + 33, "e": 18 * 60 + 33, "flags": ["入室", "時間付け"], "rid": "1"},
+    {"s": 19 * 60, "e": 20 * 60 + 20, "flags": [], "rid": "2"},
+    {"s": 21 * 60, "e": 23 * 60, "flags": ["予約"], "rid": "3"}]}
+assert S.final_end(an, {"shift": "10:00-0:00"}, 18 * 60 + 33, "s_matikado")[0] == 24 * 60     # 街角アンさん：23:00から退勤まで60分→完売
 assert S.final_end(up, bx, 16 * 60 + 9, "torori_angel") == (16 * 60 + 9, "")                # とろ〜りは30分前まで取れる
 assert S.final_end(up, bx, 16 * 60 + 40, "torori_angel")[0] == 17 * 60
 assert S.final_end(up, {"shift": "12:00-17:30"}, 16 * 60 + 9, "mrs_orange") == (16 * 60 + 9, "")   # ヘブンの退勤が17:30なら81分残る

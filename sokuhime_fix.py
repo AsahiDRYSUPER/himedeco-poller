@@ -161,7 +161,7 @@ def decide(box, person, now_min, lead, last=LAST_TAKE_DEFAULT):
     remaining = [b for b in person.get("bookings", []) if "終了" not in b["flags"] and b["e"] > now_min]
     if not remaining:
         he = shift_end_min(box) or (work[1] if work else None)
-        if he and now_min < he < now_min + last:
+        if he and now_min < he <= now_min + last:
             return he, f"予約なし・退勤{hhmm(he)}まで{he - now_min}分→受付終了"
     return None
 
@@ -202,9 +202,9 @@ def final_end(person, box, end_min, shopdir=None):
     if he is None:
         return end_min, note
     last = LAST_TAKE.get(shopdir, LAST_TAKE_DEFAULT)
-    if he - end_min >= last:
+    if he - end_min > last:            # ちょうど60分では入らない（移動・準備があるので、60分を超えて空いている時だけ）
         return end_min, note
-    return max(he, end_min), note + f"→受付終了（退勤{hhmm(he)}の{last}分前を過ぎて次が入らない）"
+    return max(he, end_min), note + f"→受付終了（退勤{hhmm(he)}まで{last}分以下で次が入らない）"
 
 
 def timed_fix(person, now_min):
