@@ -39,7 +39,9 @@ def heaven_login(page, shopdir):
         page.goto(f"{BASE}/C1GroupLogin.php?commuId={COMMU_IDS[shopdir]}&login=1", wait_until="domcontentloaded")
         page.wait_for_timeout(800)
     if not ok and "C1Login.php" in page.url:
-        raise RuntimeError(f"ログインできない（いまの場所 {page.url.replace(BASE, '')[:60]}）")
+        # 画面に出ている言葉だけ（IDやパスワードは出ない。数字は伏せる）
+        txt = re.sub(r"\d", "＊", re.sub(r"\s+", " ", page.evaluate("() => document.body.innerText") or ""))[:240]
+        raise RuntimeError(f"ログインできない（いまの場所 {page.url.replace(BASE, '')[:60]} 画面: {txt}）")
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
