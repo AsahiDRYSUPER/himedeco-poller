@@ -12,9 +12,9 @@ BOX = """<form name="sokuhimeForm" action="C9StandbyGirlList.php?shopdir=cg_kira
 <tr><td style="border: none;" colspan="2"> 12:00～ 3:00</td></tr></table></td></tr>
 <tr><td><img id="111" alt="接客中" name="" class="servingEndTime" src="img/managersimple/sekkyaku_off.gif">
 <img id="galAttribute2_0" alt="待機中" name="111" class="waitingUpdate" src="img/managersimple/taiki_on.gif"></td></tr></table>
-<table class="sokuhimegirlbox2"><tr><td><table><tr><td style="border: none; width:105px"> 花子</td></tr>
+<table class="sokuhimegirlbox3"><tr><td><table><tr><td style="border: none; width:105px"> 花子</td></tr>
 <tr><td style="border: none;" colspan="2"> 18:00～ 2:00</td></tr></table></td></tr>
-<tr><td><img id="222" alt="接客中" name="15:30" class="servingEndTime" src="img/managersimple/sekkyaku_on.gif">
+<tr><td><img id="222" alt="接客中" name="15:30" class="servingEndTimeUpdate" src="img/managersimple/sekkyaku_on.gif">
 <img id="galAttribute2_1" alt="待機中" name="222" class="waitingUpdate" src="img/managersimple/taiki_off.gif"></td></tr></table>"""
 
 boxes, hidden, hours = S.parse_standby(BOX)

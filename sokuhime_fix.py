@@ -86,10 +86,10 @@ def parse_standby(html):
     ついでにフォームの隠し項目と、時の選択肢（送る時刻の形を決める）も返す。"""
     s = BeautifulSoup(html, "html.parser")
     boxes = []
-    # 箱の表は sokuhimegirlbox2（待機中の子）だけでなく、接客中の子は別の名前の表に入っているらしい
-    # （10/10：接客中にした直後に「箱が見つからない」になった）。sokuhimegirlbox で始まる表を全部読む
+    # 箱の表は sokuhimegirlbox2（待機中の子）のほか、sokuhimegirlbox・sokuhimegirlbox3（接客中の子）がある（10/10 下調べ10）。
+    # 接客中の子の接客中ボタンは img.servingEndTimeUpdate（name=今の終了時刻）。待機中の子は img.servingEndTime
     for t in s.find_all("table", class_=re.compile(r"^sokuhimegirlbox")):
-        img = t.find("img", class_="servingEndTime")
+        img = t.find("img", class_="servingEndTime") or t.find("img", class_="servingEndTimeUpdate")
         if img is None or not img.get("id"):
             continue
         name_td = t.find("td", style=re.compile(r"width:\s*105px"))
@@ -179,7 +179,7 @@ def read_standby(page, shopdir):
 def set_serving(page, shopdir, box, end_text):
     """接客中ボタン → 時・分を選ぶ → OK。返す: (本当に接客中になったか, メモ)。"""
     hh, mm = end_text.split(":")
-    btn = page.query_selector(f'img.servingEndTime[id="{box["id"]}"]')
+    btn = page.query_selector(f'img.servingEndTime[id="{box["id"]}"], img.servingEndTimeUpdate[id="{box["id"]}"]')
     if btn is None:
         return False, "接客中ボタンが見つからない"
     btn.click()
