@@ -27,8 +27,19 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-from heaven_http import BASE
+from heaven_http import BASE, COMMU_IDS, load_credentials
 from shift_auto import login as browser_login
+
+
+def heaven_login(page, shopdir):
+    """ブラウザでログインする。店舗IDが無い店（グループIDで入る店）は、入ったあとに店を選ぶ。"""
+    _, _, direct = load_credentials(shopdir)
+    ok = browser_login(page, shopdir)
+    if not direct:
+        page.goto(f"{BASE}/C1GroupLogin.php?commuId={COMMU_IDS[shopdir]}&login=1", wait_until="domcontentloaded")
+        page.wait_for_timeout(800)
+    if not ok and "C1Login.php" in page.url:
+        raise RuntimeError(f"ログインできない（いまの場所 {page.url.replace(BASE, '')[:60]}）")
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
@@ -271,11 +282,12 @@ def run(now=None, dry=False, only=None):
             continue
         try:
             page = browser.new_context(locale="ja-JP", viewport={"width": 1300, "height": 1000}).new_page()
-            if not browser_login(page, shopdir):
-                raise RuntimeError("ログインできない")
+            heaven_login(page, shopdir)
             boxes, hidden, hours = read_standby(page, shopdir)
+            if not boxes and "C1Login.php" in page.url:
+                raise RuntimeError(f"即ヒメの画面が開けない（いまの場所 {page.url.replace(BASE, '')[:60]}）")
         except Exception as e:
-            print(f"  {label}: ヘブンが読めない {type(e).__name__}")
+            print(f"  {label}: ヘブンが読めない {type(e).__name__} {str(e)[:120]}")
             continue
         pm = match(boxes, mine)
         lead = LEAD_MIN.get(shopdir, LEAD_DEFAULT)
