@@ -8,9 +8,9 @@
        ・今まさに仕事の最中（「終了」が付いていない箱）  → 接客中、終了＝その箱の終了時刻
        ・60分以内（とろ〜りは30分以内）に仕事が始まる    → 接客中、終了＝その箱の終了時刻
        ・仮予約も仕事として数える。「終了」が付いた箱は終わった仕事
-  3c. 追加（10/10 一希さん）：CTIの出勤時間が「〜17:00Up」のように Up 付き＝その時刻には仕事を終えていたい子。
-       付ける終了時刻から上がりまでが60分（いちばん短いコース）より短ければ、次の仕事は入らない＝完売なので、
-       終了時刻は上がりの時刻（ヘブンの退勤時刻以上）にして、ヘブンで「受付終了」にする
+  3c. 追加（10/10 一希さん）：付ける終了時刻が、ヘブンの退勤時刻の60分前（とろ〜りは30分前）を過ぎていれば、
+       次の仕事は取れない＝完売なので、終了時刻は退勤時刻にして、ヘブンで「受付終了」にする
+       （例：オレンジ 沙織さん 退勤17:00・仕事が16:09終了 → 16:09でなく17:00→受付終了）
   3b. 追加（10/10 一希さん）：箱に「入室」が付いているのに「時間付け」が無い予約は、まだ入室後の時間付けが済んでいない。
        → ヘブンの終了時刻をCTIの箱の終了時刻に合わせ（接客中の子でもこの時だけは時刻を直す）、
          CTIのその予約のプレイ状況を「時間付け」にして保存する（CTIに書くのはこれだけ）
@@ -65,7 +65,8 @@ SHOPS = {
 }
 LEAD_MIN = {"torori_angel": 30}        # 仕事が始まる何分前から接客中にするか（それ以外は60分）
 LEAD_DEFAULT = 60
-MIN_COURSE = 60                         # いちばん短いコース。Up の子は、これより残りが短ければ完売（受付終了）
+LAST_TAKE = {"torori_angel": 30}        # 退勤の何分前まで仕事を取れるか（とろ〜りは30分前まで。他は60分前まで）
+LAST_TAKE_DEFAULT = 60
 OPEN_MIN, CLOSE_MIN = 9 * 60, 26 * 60  # 動く時間帯：9:00〜翌2:00（0:00からの分）
 KEEP_DAYS = 3                           # 記録を残す日数
 
@@ -165,17 +166,19 @@ def shift_end_min(box):
     return e_ + 24 * 60 if e_ <= s_ else e_
 
 
-def final_end(person, box, end_min):
-    """Up の子で、終了から上がりまでが60分未満なら、終了＝上がり（ヘブンの退勤以上）→ 受付終了。返す: (終了の分, 付け足す理由)。"""
-    work = (person or {}).get("work")
-    if not (person and person.get("up") and work):
-        return end_min, ""
-    up = work[1]
-    if up - end_min >= MIN_COURSE:
-        return end_min, ""
+def final_end(person, box, end_min, shopdir=None):
+    """終了がヘブンの退勤の60分前（とろ〜り30分前）を過ぎていれば、終了＝退勤 → 受付終了。返す: (終了の分, 付け足す理由)。
+    退勤はヘブンの箱の出勤の終わり。読めなければCTIの出勤の終わり。"""
     he = shift_end_min(box)
-    e = max(up, he or 0)
-    return e, f"→受付終了（{hhmm(up)}Upで次が入らない）"
+    work = (person or {}).get("work")
+    if he is None and work:
+        he = work[1]
+    if he is None:
+        return end_min, ""
+    last = LAST_TAKE.get(shopdir, LAST_TAKE_DEFAULT)
+    if he - end_min >= last:
+        return end_min, ""
+    return max(he, end_min), f"→受付終了（退勤{hhmm(he)}の{last}分前を過ぎて次が入らない）"
 
 
 def timed_fix(person, now_min):
@@ -369,7 +372,7 @@ def _run(cti, now, nm, dry, only):
             tb = timed_fix(person, nm)
             if tb is not None:
                 # 入室なのに時間付けが無い：ヘブンの終了をCTIの終了に合わせ、CTIを時間付けにする
-                fe, fwhy = final_end(person, b, tb["e"])
+                fe, fwhy = final_end(person, b, tb["e"], shopdir)
                 end_text = time_for_form(fe, hours)
                 entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": b["name"], "id": b["id"], "kind": "時間付け",
                          "before": ("接客中 " + b["end"]) if b["serving"] else ("待機中" if b["waiting"] else "（状態なし）"),
@@ -408,7 +411,7 @@ def _run(cti, now, nm, dry, only):
             if end_min <= nm:
                 n_skip += 1
                 continue
-            end_min, fwhy = final_end(person, b, end_min)
+            end_min, fwhy = final_end(person, b, end_min, shopdir)
             why += fwhy
             end_text = time_for_form(end_min, hours)
             entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": b["name"], "id": b["id"],

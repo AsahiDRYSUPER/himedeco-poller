@@ -54,15 +54,17 @@ assert S.timed_fix({"name": "x", "bookings": [{"s": 795, "e": 975, "flags": ["�
 assert S.timed_fix({"name": "x", "bookings": [{"s": 795, "e": 975, "flags": ["入室", "終了"], "rid": "r1"}]}, 800) is None
 assert S.timed_fix(q, 980) is None and S.timed_fix(None, 800) is None
 
-# Up の子：終了から上がりまで60分未満なら、終了＝上がり（受付終了）
+# 退勤の60分前（とろ〜り30分前）を過ぎたら受付終了
 up = {"name": "x", "work": (12 * 60, 17 * 60), "up": True, "bookings": []}
 bx = {"shift": "12:00-17:00"}
-assert S.final_end(up, bx, 16 * 60 + 9) == (17 * 60, "→受付終了（17:00Upで次が入らない）")
-assert S.final_end(up, bx, 15 * 60 + 50) == (15 * 60 + 50, "")                       # 70分残る → そのまま
-assert S.final_end(dict(up, up=False), bx, 16 * 60 + 9) == (16 * 60 + 9, "")          # Up でない → そのまま
-assert S.final_end(up, {"shift": "12:00-17:30"}, 16 * 60 + 9)[0] == 17 * 60 + 30      # ヘブンの退勤が遅ければそちら
+assert S.final_end(up, bx, 16 * 60 + 9, "mrs_orange") == (17 * 60, "→受付終了（退勤17:00の60分前を過ぎて次が入らない）")
+assert S.final_end(up, bx, 15 * 60 + 50, "mrs_orange") == (15 * 60 + 50, "")                 # 70分残る → そのまま
+assert S.final_end(up, bx, 16 * 60 + 9, "torori_angel") == (16 * 60 + 9, "")                # とろ〜りは30分前まで取れる
+assert S.final_end(up, bx, 16 * 60 + 40, "torori_angel")[0] == 17 * 60
+assert S.final_end(up, {"shift": "12:00-17:30"}, 16 * 60 + 9, "mrs_orange") == (16 * 60 + 9, "")   # ヘブンの退勤が17:30なら81分残る
+assert S.final_end(up, {"shift": ""}, 16 * 60 + 9, "mrs_orange")[0] == 17 * 60               # ヘブンが読めなければCTIの出勤の終わり
 assert S.shift_end_min({"shift": "18:00-2:00"}) == 26 * 60
-assert S.final_end(None, bx, 100) == (100, "")
+assert S.final_end(None, {"shift": ""}, 100, "x") == (100, "")
 
 # 名前の突き合わせ
 m = S.match(boxes, [p, {"name": "花子", "work": None, "bookings": []}])
