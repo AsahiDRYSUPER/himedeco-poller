@@ -88,6 +88,25 @@ assert mm["9"] is multi and mm["8"] is multi
 
 assert S.norm('城ヶ崎しずか【業界未経験】') == S.norm('城ケ崎しずか')
 
+# 先まで予約が詰まっている子：次までの空きが60分未満なら、その予約の終了までつなげる。退勤まで詰まっていれば受付終了
+full = {"name": "a", "work": (10 * 60, 24 * 60), "bookings": [
+    {"s": 17 * 60 + 13, "e": 18 * 60 + 33, "flags": ["入室"], "rid": "1"},
+    {"s": 18 * 60 + 50, "e": 20 * 60, "flags": [], "rid": "2"},
+    {"s": 20 * 60 + 30, "e": 22 * 60, "flags": ["予約"], "rid": "3"},
+    {"s": 22 * 60 + 40, "e": 24 * 60, "flags": [], "rid": "4"}]}
+assert S.chain_end(full, 18 * 60 + 33, "s_matikado") == (24 * 60, 3)
+fe, why = S.final_end(full, {"shift": "10:00-0:00"}, 18 * 60 + 33, "s_matikado")
+assert fe == 24 * 60 and "受付終了" in why, (fe, why)
+gap = {"name": "a", "work": (10 * 60, 24 * 60), "bookings": [
+    {"s": 17 * 60 + 13, "e": 18 * 60 + 33, "flags": ["入室"], "rid": "1"},
+    {"s": 20 * 60, "e": 21 * 60, "flags": [], "rid": "2"}]}
+assert S.chain_end(gap, 18 * 60 + 33, "s_matikado") == (18 * 60 + 33, 0)        # 87分空く → 18:33で待機中に戻る
+assert S.final_end(gap, {"shift": "10:00-0:00"}, 18 * 60 + 33, "s_matikado") == (18 * 60 + 33, "")
+half = {"name": "a", "work": (10 * 60, 24 * 60), "bookings": [
+    {"s": 17 * 60 + 13, "e": 18 * 60 + 33, "flags": ["入室"], "rid": "1"},
+    {"s": 19 * 60, "e": 20 * 60, "flags": [], "rid": "2"}]}
+assert S.final_end(half, {"shift": "10:00-0:00"}, 18 * 60 + 33, "s_matikado")[0] == 20 * 60   # 27分しか空かない → 20:00まで
+
 # 名前の突き合わせ
 m = S.match(boxes, [p, {"name": "花子", "work": None, "bookings": []}])
 assert m["111"] is p and m["222"]["name"] == "花子"

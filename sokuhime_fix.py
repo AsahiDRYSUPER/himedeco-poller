@@ -175,19 +175,36 @@ def shift_end_min(box):
     return e_ + 24 * 60 if e_ <= s_ else e_
 
 
+def chain_end(person, end_min, shopdir=None):
+    """終了のあと、次の予約までの空きが60分（とろ〜り30分）より短ければ仕事は入らないので、その予約の終了までつなげる。
+    つながる限り先へ（先まで予約で詰まっている子は、最後の予約の終了まで）。返す: (終了の分, つないだ本数)。一希さん 10/10（街角アンさん：18:33で切らず完売に）。"""
+    gap = LAST_TAKE.get(shopdir, LAST_TAKE_DEFAULT)
+    e, n = end_min, 0
+    for b in sorted((person or {}).get("bookings", []), key=lambda x: x["s"]):
+        if "終了" in b["flags"] or b["e"] <= e:
+            continue
+        if b["s"] - e < gap:
+            e, n = max(e, b["e"]), n + 1
+        else:
+            break
+    return e, n
+
+
 def final_end(person, box, end_min, shopdir=None):
     """終了がヘブンの退勤の60分前（とろ〜り30分前）を過ぎていれば、終了＝退勤 → 受付終了。返す: (終了の分, 付け足す理由)。
     退勤はヘブンの箱の出勤の終わり。読めなければCTIの出勤の終わり。"""
+    end_min, n = chain_end(person, end_min, shopdir)
+    note = f"→次の予約まで空きが無いので{n}本先の終了{hhmm(end_min)}まで" if n else ""
     he = shift_end_min(box)
     work = (person or {}).get("work")
     if he is None and work:
         he = work[1]
     if he is None:
-        return end_min, ""
+        return end_min, note
     last = LAST_TAKE.get(shopdir, LAST_TAKE_DEFAULT)
     if he - end_min >= last:
-        return end_min, ""
-    return max(he, end_min), f"→受付終了（退勤{hhmm(he)}の{last}分前を過ぎて次が入らない）"
+        return end_min, note
+    return max(he, end_min), note + f"→受付終了（退勤{hhmm(he)}の{last}分前を過ぎて次が入らない）"
 
 
 def timed_fix(person, now_min):
