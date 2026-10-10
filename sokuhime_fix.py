@@ -198,11 +198,23 @@ def timed_fix(person, now_min):
     return None
 
 
+def aliases(name):
+    """CTIの表記名は、複数の店に出ている子だと「天音ねね【業界未経験】,アリスRSP」のように店ごとの名前がカンマでつながる
+    （女子一覧の「所属店舗(女子名)」と同じ。一希さん 10/10）。カンマで分けて、どの名前でも合うようにする。"""
+    out = []
+    for part in re.split(r"[,、，]", name or ""):
+        n = norm(part)
+        if n and n not in out:
+            out.append(n)
+    return out or [norm(name)]
+
+
 def match(boxes, people):
-    """ヘブンの箱 → CTIの人。名前を正規化して突き合わせる（前方一致も許す）。"""
+    """ヘブンの箱 → CTIの人。名前を正規化して突き合わせる（カンマ区切りの別名も・前方一致も許す）。"""
     by = {}
     for p in people:
-        by.setdefault(norm(p["name"]), p)
+        for a in aliases(p["name"]):
+            by.setdefault(a, p)
     out = {}
     for b in boxes:
         n = norm(b["name"])

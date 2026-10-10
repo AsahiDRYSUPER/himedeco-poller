@@ -78,6 +78,14 @@ later = {"name": "y", "work": (12 * 60, 17 * 60), "bookings": [{"s": 16 * 60 + 3
 assert S.decide(w2, later, 15 * 60 + 10, 60) == (17 * 60, "80分後に開始") if False else True  # 予約が残っている子は別の決まり
 assert S.decide(w2, later, 15 * 60 + 10, 60) is None                           # 80分後の予約：まだ何もしない
 
+# 複数店の子：CTIの表記名「天音ねね【業界未経験】,アリスRSP」はどちらの名前でも合う
+assert S.aliases("天音ねね【業界未経験】,アリスRSP") == ["天音ねね", "アリスRSP"]
+multi = {"name": "天音ねね【業界未経験】,アリスRSP", "work": None, "bookings": []}
+bxs = [{"id": "9", "name": "天音ねね【業界未経験】", "serving": False, "waiting": True, "end": "", "shift": ""},
+       {"id": "8", "name": "アリスRSP", "serving": False, "waiting": True, "end": "", "shift": ""}]
+mm = S.match(bxs, [multi])
+assert mm["9"] is multi and mm["8"] is multi
+
 # 名前の突き合わせ
 m = S.match(boxes, [p, {"name": "花子", "work": None, "bookings": []}])
 assert m["111"] is p and m["222"]["name"] == "花子"
