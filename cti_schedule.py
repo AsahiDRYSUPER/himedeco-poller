@@ -188,7 +188,7 @@ class CTI:
         out = []
         for _ in range(3):
             info = page.evaluate("""() => {
-              const m = Array.from(document.querySelectorAll('.modal, [class*=modal-window], .jqmWindow')).find(e => e.getClientRects().length && e.offsetHeight > 0 && !e.classList.contains('modal-footer'));
+              const m = Array.from(document.querySelectorAll('.modal, [class*=modal-container], .modal-content, [class*=modal-window], .jqmWindow')).find(e => e.getClientRects().length && e.offsetHeight > 0 && !e.classList.contains('modal-footer'));
               if (!m) return null;
               const head = (m.innerText || '').replace(/\\s+/g, ' ').slice(0, 60);
               const btns = Array.from(m.querySelectorAll('button, a.btn, input[type=button]')).filter(b => b.getClientRects().length).map(b => (b.innerText || b.value || '').trim());
@@ -199,7 +199,7 @@ class CTI:
             out.append(re.sub(r"\d", "#", info["head"]) + " [" + "/".join(info["btns"][:6]) + "]")
             clicked = False
             for word in ("閉じる", "OK", "キャンセル", "確認", "いいえ"):
-                b = page.locator(f".modal button:has-text('{word}'), [class*=modal-window] button:has-text('{word}'), .jqmWindow button:has-text('{word}'), .modal .btn-close")
+                b = page.locator(f".modal button:has-text('{word}'), [class*=modal-container] button:has-text('{word}'), [class*=modal-window] button:has-text('{word}'), .jqmWindow button:has-text('{word}'), .modal .btn-close, [class*=modal-container] .btn-close")
                 vis = [b.nth(i) for i in range(b.count()) if b.nth(i).is_visible()]
                 if vis:
                     vis[-1].click()
@@ -223,9 +223,13 @@ class CTI:
         box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
         if box.count() == 0:
             return False, "箱が見つからない"
+        closed = self._close_modals()
         box.first.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
         page.wait_for_timeout(400)
-        box.first.click(button="right", timeout=8000)
+        try:
+            box.first.click(button="right", timeout=8000)
+        except Exception:
+            return False, f"右クリックできない（閉じた窓: {closed}）"
         # 簡易窓：見えている radio のうち、横の文字が「時間付け」のもの
         found = None
         for _ in range(20):
