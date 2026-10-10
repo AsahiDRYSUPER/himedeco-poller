@@ -85,6 +85,8 @@ def hhmm(m):
 def norm(s):
     t = unicodedata.normalize("NFKC", s or "")
     t = re.sub(r"[\[【(（].*?[\]】)）]", "", t)
+    # 「城ヶ崎」と「城ケ崎」のような小さい字の違いは同じとみなす（10/10 キラ学で合わなかった）
+    t = t.replace("ヶ", "ケ").replace("ヵ", "カ")
     return t.replace(" ", "").replace("　", "").replace("…", "")
 
 

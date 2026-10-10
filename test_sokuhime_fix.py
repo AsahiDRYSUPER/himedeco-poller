@@ -86,6 +86,8 @@ bxs = [{"id": "9", "name": "天音ねね【業界未経験】", "serving": False
 mm = S.match(bxs, [multi])
 assert mm["9"] is multi and mm["8"] is multi
 
+assert S.norm('城ヶ崎しずか【業界未経験】') == S.norm('城ケ崎しずか')
+
 # 名前の突き合わせ
 m = S.match(boxes, [p, {"name": "花子", "work": None, "bookings": []}])
 assert m["111"] is p and m["222"]["name"] == "花子"
