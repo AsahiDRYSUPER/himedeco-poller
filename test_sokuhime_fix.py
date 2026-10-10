@@ -30,8 +30,8 @@ assert S.time_for_form(15 * 60 + 5, []) == "15:05"
 # CTIの読み方
 assert C.minutes("13:25") == 805 and C.minutes("翌0:30") == 1470 and C.minutes("2:30") == 1590
 assert C.span("13:25-15:55") == (805, 955) and C.span("翌0:30-翌2:30") == (1470, 1590) and C.span("10:00-翌3:00Up") == (600, 1620)
-assert C.badge_shop(["KG", "出勤"]) == "cg_kirakira" and C.badge_shop(["ぽちゃ"]) == "potya_reen" and C.badge_shop(["街角"]) == "s_matikado"
-assert C.badge_shop(["出勤"]) is None
+assert C.badge_shop(["事務所", "出勤", "KG"]) == "cg_kirakira" and C.badge_shop(["街角", "PO"]) == "potya_reen"
+assert C.badge_shop(["街角", "出勤"]) is None          # 「街角」は待機場所。店の印ではない
 
 # 決め方（now は 0:00 からの分）
 p = {"name": "＊子", "work": (12 * 60, 27 * 60), "bookings": [

@@ -31,6 +31,7 @@ jobs:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
           CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
           CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
+          CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
         run: python3 sokuhime_fix.py --dry
       - name: ブラウザでログインして出勤登録の画面が開けるか
         env:

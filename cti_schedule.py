@@ -18,12 +18,11 @@ from datetime import datetime, timedelta, timezone
 JST = timezone(timedelta(hours=9))
 OFFICE = os.environ.get("CTI_OFFICE", "T5GFow")
 OFFICE_URL = f"https://cti2.fuzoku-fan.jp/office/#{OFFICE}"
-# 行の店の印（CTIの hime-badge の文字）→ ヘブンの shopdir。10/9 の下調べで見えたのは KG・OR・UC・VE・ぽちゃ。
-# 街角・とろ〜りの印はまだ見ていないので、文字の一部で当てる（読めなかった印は LAST_BADGES に残して、ログで分かるようにする）
-SHOP_BADGE = {"KG": "cg_kirakira", "OR": "mrs_orange", "UC": "undercover", "VE": "venus_okayama", "ぽちゃ": "potya_reen",
-              "PO": "potya_reen", "MC": "s_matikado", "MA": "s_matikado", "ML": "s_matikado", "TO": "torori_angel", "TA": "torori_angel"}
-SHOP_HINT = (("ぽちゃ", "potya_reen"), ("街", "s_matikado"), ("とろ", "torori_angel"), ("トロ", "torori_angel"),
-             ("キラ", "cg_kirakira"), ("オレ", "mrs_orange"), ("アンカバ", "undercover"), ("UNDER", "undercover"), ("VENUS", "venus_okayama"))
+# 行の印は「待機場所（事務所・街角・寮(セント)・車待機(プラッツ)…）」「出勤・当欠・出確なし」「報酬:◯円」「タグ（ロリ・ギャル…）」と
+# 2文字の店の印が混ざっている。店は2文字の印だけで決める（10/10 の見るだけ実行で分かった。「街角」は待機場所であって店ではない）。
+# 印→店の対応は、見るだけ実行でヘブンの出勤一覧の名前と突き合わせて確かめる（MK=街角 は名前の突き合わせで確認する）
+SHOP_BADGE = {"KG": "cg_kirakira", "OR": "mrs_orange", "PO": "potya_reen", "MK": "s_matikado",
+              "TO": "torori_angel", "VE": "venus_okayama", "UC": "undercover"}
 LAST_BADGES = set()
 ROW_BADGES = []          # (店, 行の印の組) 店の印の当て方を確かめる用（名前は入れない）
 
@@ -32,11 +31,8 @@ def badge_shop(badges):
     for b in badges:
         if b in SHOP_BADGE:
             return SHOP_BADGE[b]
-    for b in badges:
-        for hint, shop in SHOP_HINT:
-            if hint.lower() in b.lower():
-                return SHOP_BADGE.setdefault(b, shop)
     return None
+
 
 READ_JS = r"""() => {
   const rows = Array.from(document.querySelectorAll('.schedule-row')).map(rw => {
@@ -106,7 +102,7 @@ def parse(raw):
     for r in rows:
         LAST_BADGES.update(b for b in r["badges"] if b and len(b) <= 6)
         shop = badge_shop(r["badges"])
-        ROW_BADGES.append((shop, tuple(r["badges"][:3])))
+        ROW_BADGES.append((shop, tuple(b for b in r["badges"] if not b.startswith("報酬"))))
         out.append({"shop": shop, "name": r["name"], "work": span(r["work"]), "top": r["top"], "bottom": r["bottom"], "bookings": []})
     for it in raw["items"]:
         sp = span(it["time"])

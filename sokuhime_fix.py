@@ -198,6 +198,32 @@ def save_log(entries, now):
                                     "generated_at": now.isoformat()}), encoding="utf-8")
 
 
+# ---------- 店の印の確かめ（見るだけの時だけ） ----------
+def badge_check(people, now):
+    """CTIの店の印ごとに、その子たちの名前がヘブンのどの店の出勤一覧にあるかを数える（名前は出さない）。"""
+    from collections import Counter
+    import cti_schedule
+    combos = Counter(cti_schedule.ROW_BADGES)
+    for (shop, badges), n in sorted(combos.items(), key=lambda kv: (str(kv[0][0]), -kv[1]))[:40]:
+        print(f"  店の印の当て方: {shop or '?'} ← {list(badges)} ×{n}")
+    try:
+        from cityheaven_api import SHOPS_API, fetch_shift_list, parse_girls
+    except Exception as e:
+        print("  ヘブンの出勤一覧が読めない:", type(e).__name__)
+        return
+    heaven = {}
+    for shopdir, info in SHOPS_API.items():
+        try:
+            heaven[shopdir] = {norm(g["name"]) for g in parse_girls(fetch_shift_list(info["shopid"], info["apikey"], base_day=now.strftime("%Y%m%d")))}
+        except Exception as e:
+            print(f"  {shopdir}: 出勤一覧が読めない {type(e).__name__}")
+    for shop in sorted({p["shop"] or "?" for p in people}):
+        names = [norm(p["name"]) for p in people if (p["shop"] or "?") == shop]
+        hits = {sd: sum(1 for nme in names if nme in hv) for sd, hv in heaven.items()}
+        hits = {k: v for k, v in hits.items() if v}
+        print(f"  CTIで {shop} の {len(names)}人 → ヘブンの出勤一覧にいる店: {hits}")
+
+
 # ---------- 本体 ----------
 def run(now=None, dry=False, only=None):
     now = now or datetime.now(JST)
@@ -209,11 +235,8 @@ def run(now=None, dry=False, only=None):
     people, head = cti_schedule.read_today(now)
     print(f"即ヒメ: CTI {head} → {cti_schedule.summary(people)}")
     unknown = sorted({b for b in cti_schedule.LAST_BADGES if b not in cti_schedule.SHOP_BADGE}) if hasattr(cti_schedule, "LAST_BADGES") else []
-    if dry and getattr(cti_schedule, "ROW_BADGES", None):
-        from collections import Counter
-        combos = Counter(cti_schedule.ROW_BADGES)
-        for (shop, badges), n in sorted(combos.items(), key=lambda kv: (str(kv[0][0]), -kv[1])):
-            print(f"  店の印の当て方: {shop or '?'} ← {list(badges)} ×{n}")
+    if dry:
+        badge_check(people, now)
     entries = load_log() if not dry else []
     new = []
     for shopdir, label in SHOPS.items():
