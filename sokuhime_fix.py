@@ -373,6 +373,12 @@ def _run(cti, now, nm, dry, only):
 
         st = {"page": None}
         if dry and only:
+            # 突き合わせに失敗した名前の形を見る（頭1文字＋長さ＋記号だけ。本名は出さない）
+            def shape(nm):
+                return nm[:1] + "…" + str(len(norm(nm))) + ("【" if "【" in nm else "") + ("," if "," in nm else "") + ("(" if "(" in nm or "（" in nm else "")
+            matched = {id(pz) for pz in pm.values() if pz is not None}
+            print("    CTIにいてヘブンの箱に合わなかった名前の形:", [shape(pz["name"]) for pz in mine if id(pz) not in matched and pz["shop"] == shopdir])
+            print("    ヘブンの箱でCTIに合わなかった名前の形:", [shape(b["name"]) for b in boxes if pm.get(b["id"]) is None])
             # 1店だけ見る時は、箱ごとの判断の材料を出す（名前は頭1文字だけ）
             for b in boxes:
                 pz = pm.get(b["id"])
