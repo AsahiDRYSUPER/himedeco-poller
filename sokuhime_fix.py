@@ -350,7 +350,12 @@ def _run(cti, now, nm, dry, only):
                          "cti": [(hhmm(x["s"]) + "-" + hhmm(x["e"]) + ("/".join([""] + x["flags"]) if x["flags"] else "")) for x in person["bookings"]],
                          "work": (hhmm(person["work"][0]) + "-" + hhmm(person["work"][1])) if person.get("work") else ""}
                 if dry:
-                    entry.update(ok=None, note="見るだけ", cti_ok=None, cti_note="見るだけ")
+                    # 見るだけでも、CTIの「編集」まで開けるかは確かめる（保存はしない）
+                    try:
+                        cok, cnote = cti.mark_timed(tb["rid"], save=False, now=now)
+                    except Exception as e:
+                        cok, cnote = False, f"CTIで押せなかった {type(e).__name__} {str(e)[:80]}"
+                    entry.update(ok=None, note="見るだけ", cti_ok=cok, cti_note=cnote)
                 else:
                     if b["serving"] and b["end"] == end_text:
                         ok, note = True, "ヘブンは同じ時刻"
@@ -360,7 +365,7 @@ def _run(cti, now, nm, dry, only):
                         except Exception as e:
                             ok, note = False, f"押せなかった {type(e).__name__} {str(e)[:80]}"
                     try:
-                        cti_ok, cti_note = cti.mark_timed(tb["rid"])
+                        cti_ok, cti_note = cti.mark_timed(tb["rid"], now=now)
                     except Exception as e:
                         cti_ok, cti_note = False, f"CTIで押せなかった {type(e).__name__} {str(e)[:80]}"
                     entry.update(ok=ok, note=note, cti_ok=cti_ok, cti_note=cti_note)
@@ -399,7 +404,7 @@ def _run(cti, now, nm, dry, only):
     browser.close()
     if dry:
         for e in new:
-            print("   ", e["shop"], "＊" * min(len(e["name"]), 4), e["before"], "→ 接客中", e["end"], e["why"], ("＋CTIを時間付けに" if e.get("kind") == "時間付け" else ""))
+            print("   ", e["shop"], "＊" * min(len(e["name"]), 4), e["before"], "→ 接客中", e["end"], e["why"], (f"＋CTIを時間付けに（確かめ: {e.get('cti_ok')} {e.get('cti_note')}）" if e.get("kind") == "時間付け" else ""))
         return 0
     if new:
         save_log(entries + new, now)

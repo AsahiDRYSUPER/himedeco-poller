@@ -182,17 +182,35 @@ class CTI:
             raise RuntimeError("本日スケジュールの行が出ない")
         return parse(raw)
 
-    def mark_timed(self, rid):
+    def mark_timed(self, rid, save=True, now=None):
         """その予約のプレイ状況を「時間付け」にして保存する。返す: (できたか, メモ)。
-        人と同じ押し方：箱をダブルクリック → 大きな窓 →「編集」→ ﾌﾟﾚｲ状況 → 保存。他の欄は触らない。"""
+        人と同じ押し方：箱をダブルクリック → 大きな窓 →「編集」→ ﾌﾟﾚｲ状況 → 保存。他の欄は触らない。
+        save=False は確かめ用（保存の手前まで行って閉じる）。"""
         page = self.page
         if not rid:
             return False, "箱のIDが無い"
+        # ヘブン側の操作で時間が経っているので、本日スケジュールを開き直してから押す（10/10 15:02 ダブルクリックが30秒待っても押せなかった）
+        page.keyboard.press("Escape")
+        try:
+            self.read(now)
+        except Exception as e:
+            return False, f"開き直せない {type(e).__name__}"
         box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
         if box.count() == 0:
             return False, "箱が見つからない"
-        page.keyboard.press("Escape")
-        box.first.dblclick()
+        try:
+            box.first.scroll_into_view_if_needed(timeout=5000)
+            box.first.dblclick(timeout=8000)
+        except Exception:
+            # 押せない時は、箱の真ん中の座標を直接ダブルクリック（何かが上にかぶっている時用）
+            bb = box.first.bounding_box()
+            if not bb:
+                return False, "箱が画面に無い"
+            cover = page.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); return e ? e.tagName + '.' + e.className.toString().slice(0, 40) : ''; }", [bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2])
+            page.mouse.dblclick(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+            page.wait_for_timeout(500)
+            if not page.locator("button.btn-detail:has-text('編集')").count():
+                return False, f"箱を押せない（上にあるもの: {cover}）"
         try:
             page.wait_for_selector("button.btn-detail:has-text('編集')", state="visible", timeout=10000)
         except Exception:
@@ -211,14 +229,17 @@ class CTI:
             page.keyboard.press("Escape")
             return False, "ﾌﾟﾚｲ状況の欄が見つからない"
         value = sel.first.evaluate("s => Array.from(s.options).find(o => /時間付け/.test(o.text)).value")
+        btn = page.locator(".modal-footer button.btn-green:has-text('保存')")
+        if btn.count() == 0:
+            page.keyboard.press("Escape")
+            return False, "保存ボタンが見つからない"
+        if not save:
+            page.keyboard.press("Escape")
+            return True, "保存の手前まで通った（確かめ）"
         sel.first.select_option(value)
         page.wait_for_timeout(300)
         page.once("dialog", lambda d: d.accept())
-        save = page.locator(".modal-footer button.btn-green:has-text('保存')")
-        if save.count() == 0:
-            page.keyboard.press("Escape")
-            return False, "保存ボタンが見つからない"
-        save.first.click()
+        btn.first.click()
         page.wait_for_timeout(3000)
         page.keyboard.press("Escape")
         # 保存できたかは、箱に「時間付け」の印が付いたかで確かめる
