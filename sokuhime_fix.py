@@ -138,8 +138,9 @@ def time_for_form(end_min, hours):
 
 
 # ---------- 直すかどうかを決める ----------
-def decide(box, person, now_min, lead):
-    """返す: (終了の分, 理由) か None。person は cti_schedule の1人分（無ければ None）。"""
+def decide(box, person, now_min, lead, last=LAST_TAKE_DEFAULT):
+    """返す: (終了の分, 理由) か None。person は cti_schedule の1人分（無ければ None）。
+    last＝退勤の何分前まで仕事を取れるか（予約が無くても、それを過ぎていれば受付終了にする。一希さん 10/10）。"""
     if box["serving"]:
         return None                                   # 接客中の子には触らない
     if person is None:
@@ -154,6 +155,12 @@ def decide(box, person, now_min, lead):
             return b["e"], "接客中" + ("（入室）" if "入室" in b["flags"] else "")
         if now_min < b["s"] <= now_min + lead:
             return b["e"], f"{b['s'] - now_min}分後に開始"
+    # 予約が残っていない子：退勤まで last 分を切っていたら、もう仕事は取れない → 受付終了（終了＝退勤）
+    remaining = [b for b in person.get("bookings", []) if "終了" not in b["flags"] and b["e"] > now_min]
+    if not remaining:
+        he = shift_end_min(box) or (work[1] if work else None)
+        if he and now_min < he < now_min + last:
+            return he, f"予約なし・退勤{hhmm(he)}まで{he - now_min}分→受付終了"
     return None
 
 
@@ -403,7 +410,7 @@ def _run(cti, now, nm, dry, only):
                 new.append(entry)
                 n_set += 1
                 continue
-            dec = decide(b, person, nm, lead)
+            dec = decide(b, person, nm, lead, LAST_TAKE.get(shopdir, LAST_TAKE_DEFAULT))
             if dec is None:
                 n_skip += 1
                 continue

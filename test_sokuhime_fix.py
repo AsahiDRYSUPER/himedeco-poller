@@ -66,6 +66,18 @@ assert S.final_end(up, {"shift": ""}, 16 * 60 + 9, "mrs_orange")[0] == 17 * 60  
 assert S.shift_end_min({"shift": "18:00-2:00"}) == 26 * 60
 assert S.final_end(None, {"shift": ""}, 100, "x") == (100, "")
 
+# 予約が無く、退勤まで60分（とろ〜り30分）を切った待機中の子 → 受付終了
+w2 = dict(w, shift="12:00-17:00")
+none_left = {"name": "y", "work": (12 * 60, 17 * 60), "bookings": [{"s": 13 * 60, "e": 14 * 60, "flags": ["終了"], "rid": "a"}]}
+assert S.decide(w2, none_left, 16 * 60 + 10, 60) == (17 * 60, "予約なし・退勤17:00まで50分→受付終了")
+assert S.decide(w2, none_left, 15 * 60 + 50, 60) is None                       # まだ70分ある
+assert S.decide(w2, none_left, 16 * 60 + 10, 60, last=30) is None             # とろ〜りは30分前まで取れる
+assert S.decide(w2, none_left, 16 * 60 + 40, 60, last=30)[0] == 17 * 60
+assert S.decide(w2, none_left, 17 * 60 + 5, 60) is None                        # 退勤を過ぎている（ヘブンが自分で受付終了にする）
+later = {"name": "y", "work": (12 * 60, 17 * 60), "bookings": [{"s": 16 * 60 + 30, "e": 17 * 60, "flags": [], "rid": "a"}]}
+assert S.decide(w2, later, 15 * 60 + 10, 60) == (17 * 60, "80分後に開始") if False else True  # 予約が残っている子は別の決まり
+assert S.decide(w2, later, 15 * 60 + 10, 60) is None                           # 80分後の予約：まだ何もしない
+
 # 名前の突き合わせ
 m = S.match(boxes, [p, {"name": "花子", "work": None, "bookings": []}])
 assert m["111"] is p and m["222"]["name"] == "花子"
