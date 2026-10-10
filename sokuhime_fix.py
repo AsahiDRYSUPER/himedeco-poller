@@ -27,8 +27,13 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-from heaven_http import BASE, COMMU_IDS, load_credentials
+from heaven_http import BASE, COMMU_IDS, HeavenClient, load_credentials
 from shift_auto import login as browser_login
+
+# 読むのは HTTP（軽い。7店とも通る）。ブラウザは「押す店」だけ開く。
+# ブラウザで続けて何店もログインすると、ヘブンの前の壁（Cloudflare）に "Sorry, you have been blocked" と止められる（10/10 に4店目で発生）ので、
+# 押す必要がある店だけ・間を空けて開く
+BROWSER_GAP_SEC = 20
 
 
 def heaven_login(page, shopdir):
@@ -274,6 +279,7 @@ def run(now=None, dry=False, only=None):
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
     browser = pw.chromium.launch(headless=True)
+    browser_logins = []
     for shopdir, label in SHOPS.items():
         if only and shopdir not in only:
             continue
@@ -283,11 +289,11 @@ def run(now=None, dry=False, only=None):
             print(f"  {label}: CTIに今日の子がいない")
             continue
         try:
-            page = browser.new_context(locale="ja-JP", viewport={"width": 1300, "height": 1000}).new_page()
-            heaven_login(page, shopdir)
-            boxes, hidden, hours = read_standby(page, shopdir)
-            if not boxes and "C1Login.php" in page.url:
-                raise RuntimeError(f"即ヒメの画面が開けない（いまの場所 {page.url.replace(BASE, '')[:60]}）")
+            a, p_, d = load_credentials(shopdir)
+            cli = HeavenClient(a, p_, direct=d)
+            cli.login_and_select(shopdir)
+            boxes, hidden, hours = parse_standby(cli._get(f"/C9StandbyGirlList.php?shopdir={shopdir}").text)
+            page = None
         except Exception as e:
             print(f"  {label}: ヘブンが読めない {type(e).__name__} {str(e)[:120]}")
             continue
@@ -316,15 +322,23 @@ def run(now=None, dry=False, only=None):
                 entry["note"] = "見るだけ"
             else:
                 try:
+                    if page is None:
+                        if browser_logins:
+                            time.sleep(BROWSER_GAP_SEC)
+                        page = browser.new_context(locale="ja-JP", viewport={"width": 1300, "height": 1000}).new_page()
+                        heaven_login(page, shopdir)
+                        browser_logins.append(shopdir)
+                        read_standby(page, shopdir)
                     ok, note = set_serving(page, shopdir, b, end_text)
                 except Exception as e:
-                    ok, note = False, f"押せなかった {type(e).__name__}"
+                    ok, note = False, f"押せなかった {type(e).__name__} {str(e)[:80]}"
                 entry["ok"], entry["note"] = ok, note
                 time.sleep(1.0)
             new.append(entry)
             n_set += 1
         print(f"  {label}: 箱{len(boxes)} → 直した{n_set}・そのまま{n_skip}・CTIに名前が無い{n_nomatch}" + (f"（時の選択肢 {hours[:3]}…{hours[-2:]}）" if hours else "（時の選択肢が読めない）"))
-        page.context.close()
+        if page is not None:
+            page.context.close()
     browser.close()
     pw.stop()
     if dry:
