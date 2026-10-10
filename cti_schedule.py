@@ -182,6 +182,34 @@ class CTI:
             raise RuntimeError("本日スケジュールの行が出ない")
         return parse(raw)
 
+    def _close_modals(self):
+        """見えている窓（.modal）を、閉じる・OK・キャンセルのボタンか Escape で閉じる。返す: 閉じた窓の見出し（数字は伏せる）。"""
+        page = self.page
+        out = []
+        for _ in range(3):
+            info = page.evaluate("""() => {
+              const m = Array.from(document.querySelectorAll('.modal, [class*=modal-window], .jqmWindow')).find(e => e.getClientRects().length && e.offsetHeight > 0 && !e.classList.contains('modal-footer'));
+              if (!m) return null;
+              const head = (m.innerText || '').replace(/\\s+/g, ' ').slice(0, 60);
+              const btns = Array.from(m.querySelectorAll('button, a.btn, input[type=button]')).filter(b => b.getClientRects().length).map(b => (b.innerText || b.value || '').trim());
+              return {head, btns};
+            }""")
+            if not info:
+                break
+            out.append(re.sub(r"\d", "#", info["head"]) + " [" + "/".join(info["btns"][:6]) + "]")
+            clicked = False
+            for word in ("閉じる", "OK", "キャンセル", "確認", "いいえ"):
+                b = page.locator(f".modal button:has-text('{word}'), [class*=modal-window] button:has-text('{word}'), .jqmWindow button:has-text('{word}'), .modal .btn-close")
+                vis = [b.nth(i) for i in range(b.count()) if b.nth(i).is_visible()]
+                if vis:
+                    vis[-1].click()
+                    clicked = True
+                    break
+            if not clicked:
+                page.keyboard.press("Escape")
+            page.wait_for_timeout(800)
+        return out
+
     def mark_timed(self, rid, save=True, now=None):
         """その予約のプレイ状況を「時間付け」にして保存する。返す: (できたか, メモ)。
         人と同じ押し方：箱をダブルクリック → 大きな窓 →「編集」→ ﾌﾟﾚｲ状況 → 保存。他の欄は触らない。
@@ -198,6 +226,8 @@ class CTI:
         box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
         if box.count() == 0:
             return False, "箱が見つからない"
+        # 画面に何かの窓（modal）が開いていたら、先に閉じる（10/10：modal-footer が箱の上にかぶって押せなかった）
+        closed = self._close_modals()
         try:
             box.first.scroll_into_view_if_needed(timeout=5000)
             box.first.dblclick(timeout=8000)
@@ -210,7 +240,7 @@ class CTI:
             page.mouse.dblclick(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
             page.wait_for_timeout(500)
             if not page.locator("button.btn-detail:has-text('編集')").count():
-                return False, f"箱を押せない（上にあるもの: {cover}）"
+                return False, f"箱を押せない（上にあるもの: {cover}／閉じた窓: {closed}）"
         try:
             page.wait_for_selector("button.btn-detail:has-text('編集')", state="visible", timeout=10000)
         except Exception:
