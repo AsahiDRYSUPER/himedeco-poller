@@ -229,14 +229,16 @@ class CTI:
         # 画面に何かの窓（modal）が開いていたら、先に閉じる（10/10：modal-footer が箱の上にかぶって押せなかった）
         closed = self._close_modals()
         try:
-            box.first.scroll_into_view_if_needed(timeout=5000)
+            # 箱を画面の真ん中に持ってくる（端に寄せると、画面の下に固定されたバーの後ろに隠れて押せない）
+            box.first.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
+            page.wait_for_timeout(500)
             box.first.dblclick(timeout=8000)
         except Exception:
             # 押せない時は、箱の真ん中の座標を直接ダブルクリック（何かが上にかぶっている時用）
             bb = box.first.bounding_box()
             if not bb:
                 return False, "箱が画面に無い"
-            cover = page.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); return e ? e.tagName + '.' + e.className.toString().slice(0, 40) : ''; }", [bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2])
+            cover = page.evaluate("([x, y]) => { let e = document.elementFromPoint(x, y); const a = []; while (e && a.length < 4) { a.push(e.tagName + '.' + e.className.toString().slice(0, 30)); e = e.parentElement; } return a.join(' < ') + ' @' + Math.round(x) + ',' + Math.round(y) + ' 画面高' + window.innerHeight; }", [bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2])
             page.mouse.dblclick(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
             page.wait_for_timeout(500)
             if not page.locator("button.btn-detail:has-text('編集')").count():
