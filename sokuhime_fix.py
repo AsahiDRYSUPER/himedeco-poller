@@ -300,9 +300,8 @@ def _run(cti, now, nm, dry, only):
         badge_check(people, now)
     entries = load_log() if not dry else []
     new = []
-    from playwright.sync_api import sync_playwright
-    pw = sync_playwright().start()
-    browser = pw.chromium.launch(headless=True)
+    # ブラウザの土台はCTIのもの（cti.pw）を使い回す（Playwright を二重に起動すると止まる）
+    browser = cti.pw.chromium.launch(headless=True)
     browser_logins = []
     for shopdir, label in SHOPS.items():
         if only and shopdir not in only:
@@ -398,7 +397,6 @@ def _run(cti, now, nm, dry, only):
         if st["page"] is not None:
             st["page"].context.close()
     browser.close()
-    pw.stop()
     if dry:
         for e in new:
             print("   ", e["shop"], "＊" * min(len(e["name"]), 4), e["before"], "→ 接客中", e["end"], e["why"], ("＋CTIを時間付けに" if e.get("kind") == "時間付け" else ""))
