@@ -424,8 +424,9 @@ def _run(cti, now, nm, dry, only):
             if end_min <= nm:
                 n_skip += 1
                 continue
-            end_min, fwhy = final_end(person, b, end_min, shopdir)
-            why += fwhy
+            if "受付終了" not in why:
+                end_min, fwhy = final_end(person, b, end_min, shopdir)
+                why += fwhy
             end_text = time_for_form(end_min, hours)
             entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": b["name"], "id": b["id"],
                      "before": "待機中" if b["waiting"] else "（状態なし）", "end": end_text, "why": why,
