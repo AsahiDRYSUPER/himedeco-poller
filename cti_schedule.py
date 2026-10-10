@@ -132,7 +132,10 @@ def read_today(now=None):
     password = os.environ.get("CTI_PASSWORD", "").strip("\r\n")
     login_url = os.environ.get("CTI_LOGIN_URL", "").strip()
     if not password or not login_url.startswith("https://cti2.fuzoku-fan.jp/"):
-        raise RuntimeError("CTI_PASSWORD / CTI_LOGIN_URL が無い")
+        # 中身は出さない。どちらがおかしいかだけ分かるようにする
+        hint = (f"パスワード{len(password)}字、URL{len(login_url)}字"
+                f"（https始まり:{login_url.startswith('https://')} / cti2を含む:{'cti2.fuzoku-fan.jp' in login_url}）")
+        raise RuntimeError("CTI_PASSWORD / CTI_LOGIN_URL が無いか形が違う: " + hint)
     now = now or datetime.now(JST)
     # 営業日は 10時〜翌2時。深夜 0〜5時は前の日のスケジュールを見る
     day = now - timedelta(hours=5)
