@@ -208,7 +208,7 @@ def run(now=None, dry=False, only=None):
     import cti_schedule
     people, head = cti_schedule.read_today(now)
     print(f"即ヒメ: CTI {head} → {cti_schedule.summary(people)}")
-    unknown = sorted({b for p in cti_schedule.LAST_BADGES if b not in cti_schedule.SHOP_BADGE}) if hasattr(cti_schedule, "LAST_BADGES") else []
+    unknown = sorted({b for b in cti_schedule.LAST_BADGES if b not in cti_schedule.SHOP_BADGE}) if hasattr(cti_schedule, "LAST_BADGES") else []
     if unknown:
         print("  店の印で読めないもの:", unknown)
     entries = load_log() if not dry else []
