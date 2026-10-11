@@ -250,13 +250,16 @@ class CTI:
         if not rid:
             return False, "箱のIDが無い"
         page.keyboard.press("Escape")
-        try:
-            self.read(now)
-        except Exception as e:
-            return False, f"開き直せない {type(e).__name__}"
         box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
         if box.count() == 0:
-            return False, "箱が見つからない"
+            # 画面が古い時だけ開き直す（毎回開き直すと1人あたり10秒以上かかっていた 10/11）
+            try:
+                self.read(now)
+            except Exception as e:
+                return False, f"開き直せない {type(e).__name__}"
+            box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
+            if box.count() == 0:
+                return False, "箱が見つからない"
         closed = self._close_modals()
         box.first.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
         page.wait_for_timeout(400)
@@ -298,10 +301,10 @@ class CTI:
         page.wait_for_timeout(300)
         page.once("dialog", lambda d: d.accept())
         self._click(vis[-1], "簡易窓の更新")
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(1200)
         page.keyboard.press("Escape")
-        for _ in range(6):
-            time.sleep(1.0)
+        for _ in range(5):
+            time.sleep(0.6)
             b2 = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
             txt = b2.first.inner_text() if b2.count() else ""
             if "時間付け" in txt:

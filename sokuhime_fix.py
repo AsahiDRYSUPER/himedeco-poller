@@ -39,7 +39,7 @@ from shift_auto import login as browser_login
 # 読むのは HTTP（軽い。7店とも通る）。ブラウザは「押す店」だけ開く。
 # ブラウザで続けて何店もログインすると、ヘブンの前の壁（Cloudflare）に "Sorry, you have been blocked" と止められる（10/10 に4店目で発生）ので、
 # 押す必要がある店だけ・間を空けて開く
-BROWSER_GAP_SEC = 20
+BROWSER_GAP_SEC = 8
 
 
 def heaven_login(page, shopdir):
