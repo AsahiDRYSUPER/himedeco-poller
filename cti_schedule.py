@@ -231,6 +231,10 @@ class CTI:
         page = self.page
         out = []
         for _ in range(3):
+            # 先に、画面内の確認（「保存されていない変更があります。閉じますか？」など）があれば OK で答える
+            ans = self._answer_confirm(wait_ms=300)
+            if ans:
+                out.append("確認:" + ans[:30])
             info = page.evaluate("""() => {
               const m = Array.from(document.querySelectorAll('.modal, [class*=modal-container], .modal-content, [class*=modal-window], .jqmWindow')).find(e => e.getClientRects().length && e.offsetHeight > 0 && !e.classList.contains('modal-footer'));
               if (!m) return null;
@@ -255,6 +259,7 @@ class CTI:
             if not clicked:
                 page.keyboard.press("Escape")
             page.wait_for_timeout(800)
+            self._answer_confirm(wait_ms=600)
         return out
 
     def _safe_point(self, box):
