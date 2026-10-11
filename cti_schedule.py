@@ -296,20 +296,31 @@ class CTI:
         if not save:
             page.keyboard.press("Escape")
             return True, "簡易窓で更新の手前まで通った（確かめ）"
-        page.evaluate("""() => { const rs = Array.from(document.querySelectorAll('input[type=radio]')).filter(r => r.getClientRects().length);
-          const r = rs.find(r => /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || '')); if (r) r.click(); }""")
-        page.wait_for_timeout(300)
+        # 「時間付け」の丸を本物のマウスで押す。押した瞬間に保存されて窓が閉じる（10/11 写真で確認。「更新」は要らない）
+        rb = page.evaluate("""() => { const rs = Array.from(document.querySelectorAll('input[type=radio]')).filter(r => r.getClientRects().length);
+          const r = rs.find(r => /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || '')); if (!r) return null;
+          const b = r.getBoundingClientRect(); return {x: b.left + b.width / 2, y: b.top + b.height / 2}; }""")
+        if not rb:
+            page.keyboard.press("Escape")
+            return False, "時間付けの丸が見つからない"
         page.once("dialog", lambda d: d.accept())
-        self._click(vis[-1], "簡易窓の更新")
-        page.wait_for_timeout(1200)
-        page.keyboard.press("Escape")
-        for _ in range(5):
-            time.sleep(0.6)
+        page.mouse.click(rb["x"], rb["y"])
+        page.wait_for_timeout(1500)
+        # まだ窓が開いていれば「更新」を押す
+        still = page.evaluate("() => Array.from(document.querySelectorAll('input[type=radio]')).some(r => r.getClientRects().length && /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || ''))")
+        if still:
+            ub = page.evaluate("""() => { const b = Array.from(document.querySelectorAll('button')).find(b => b.getClientRects().length && /^\\s*更新\\s*$/.test(b.innerText)); if (!b) return null; const r = b.getBoundingClientRect(); return {x: r.left + r.width / 2, y: r.top + r.height / 2}; }""")
+            if ub:
+                page.mouse.click(ub["x"], ub["y"])
+                page.wait_for_timeout(1500)
+            page.keyboard.press("Escape")
+        for _ in range(6):
             b2 = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
             txt = b2.first.inner_text() if b2.count() else ""
             if "時間付け" in txt:
                 return True, "時間付け（簡易窓）"
-        return False, "更新したが時間付けの印が付かない"
+            time.sleep(0.7)
+        return False, "押したが時間付けの印が付かない"
 
     def mark_timed(self, rid, save=True, now=None):
         """まず右クリックの簡易窓で。だめなら大きな窓（編集→保存）で。"""
