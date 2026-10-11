@@ -501,6 +501,8 @@ def _run(cti, now, nm, dry, only):
 if __name__ == "__main__":
     dry = "--dry" in sys.argv
     only = [a for a in sys.argv[1:] if not a.startswith("--")] or None
+    if only and "all" in only:          # 全店を今すぐ（selftest の live_shop=all）
+        only = None
     try:
         raise SystemExit(run(dry=dry, only=only))
     except Exception as e:
