@@ -212,6 +212,22 @@ class CTI:
             page.wait_for_timeout(800)
         return out
 
+    def _safe_point(self, box):
+        """箱の中で、上に何もかぶっていない点を探す（10/11：今の時刻の赤い縦線 .vertical-line が箱の真ん中にかぶって押せなかった）。"""
+        page = self.page
+        bb = box.first.bounding_box()
+        if not bb:
+            return None
+        for fx in (0.5, 0.25, 0.75, 0.12, 0.88, 0.35, 0.65):
+            x, y = bb["x"] + bb["width"] * fx, bb["y"] + bb["height"] * 0.5
+            try:
+                ok = page.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); return !!(e && e.closest('apo-resv')); }", [x, y])
+            except Exception:
+                ok = False
+            if ok:
+                return x, y
+        return bb["x"] + bb["width"] * 0.2, bb["y"] + bb["height"] * 0.5
+
     def mark_timed_quick(self, rid, save=True, now=None):
         """右クリックの簡易窓で、プレイ状況の「時間付け」にチェック → 更新（一希さん 10/10「右クリックで簡易的に変えれる」）。返す: (できたか, メモ)。"""
         page = self.page
@@ -228,10 +244,10 @@ class CTI:
         closed = self._close_modals()
         box.first.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
         page.wait_for_timeout(400)
-        try:
-            box.first.click(button="right", timeout=8000)
-        except Exception:
-            return False, f"右クリックできない（閉じた窓: {closed}）"
+        pt = self._safe_point(box)
+        if pt is None:
+            return False, "箱が画面に無い"
+        page.mouse.click(pt[0], pt[1], button="right")
         # 簡易窓：見えている radio のうち、横の文字が「時間付け」のもの
         found = None
         for _ in range(20):
@@ -302,7 +318,11 @@ class CTI:
             # 箱を画面の真ん中に持ってくる（端に寄せると、画面の下に固定されたバーの後ろに隠れて押せない）
             box.first.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
             page.wait_for_timeout(500)
-            box.first.dblclick(timeout=8000)
+            pt = self._safe_point(box)
+            page.mouse.dblclick(pt[0], pt[1])
+            page.wait_for_timeout(1500)
+            if not page.locator("button.btn-detail:has-text('編集')").count():
+                raise RuntimeError("窓が開かない")
         except Exception:
             # 押せない時は、箱の真ん中の座標を直接ダブルクリック（何かが上にかぶっている時用）
             bb = box.first.bounding_box()
