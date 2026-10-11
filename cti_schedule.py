@@ -184,6 +184,19 @@ class CTI:
             raise RuntimeError("本日スケジュールの行が出ない")
         return parse(raw)
 
+    def _click(self, loc, step):
+        """押す。4秒で押せなければ、JSで直接クリックする（上に何かかぶっていても届く）。それでもだめなら、どの段で止まったかを書いて例外にする。
+        （10/11 本番：Locator.click が30秒待って落ちていたが、どの click か分からなかった）"""
+        try:
+            loc.click(timeout=4000)
+            return
+        except Exception as e1:
+            try:
+                loc.evaluate("e => e.click()")
+                return
+            except Exception as e2:
+                raise RuntimeError(f"{step}で押せない（{type(e1).__name__}／{type(e2).__name__}）")
+
     def _close_modals(self):
         """見えている窓（.modal）を、閉じる・OK・キャンセルのボタンか Escape で閉じる。返す: 閉じた窓の見出し（数字は伏せる）。"""
         page = self.page
@@ -204,8 +217,11 @@ class CTI:
                 b = page.locator(f".modal button:has-text('{word}'), [class*=modal-container] button:has-text('{word}'), [class*=modal-window] button:has-text('{word}'), .jqmWindow button:has-text('{word}'), .modal .btn-close, [class*=modal-container] .btn-close")
                 vis = [b.nth(i) for i in range(b.count()) if b.nth(i).is_visible()]
                 if vis:
-                    vis[-1].click()
-                    clicked = True
+                    try:
+                        self._click(vis[-1], "窓を閉じる")
+                        clicked = True
+                    except Exception:
+                        clicked = False
                     break
             if not clicked:
                 page.keyboard.press("Escape")
@@ -274,7 +290,7 @@ class CTI:
           const r = rs.find(r => /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || '')); if (r) r.click(); }""")
         page.wait_for_timeout(300)
         page.once("dialog", lambda d: d.accept())
-        vis[-1].click()
+        self._click(vis[-1], "簡易窓の更新")
         page.wait_for_timeout(2500)
         page.keyboard.press("Escape")
         for _ in range(6):
@@ -341,7 +357,7 @@ class CTI:
         vis = [edits.nth(i) for i in range(edits.count()) if edits.nth(i).is_visible()]
         if not vis:
             return False, "編集ボタンが見えない"
-        vis[-1].click()
+        self._click(vis[-1], "編集ボタン")
         try:
             page.wait_for_selector(".resv-edit-container select", state="visible", timeout=10000)
         except Exception:
@@ -361,7 +377,7 @@ class CTI:
         sel.first.select_option(value)
         page.wait_for_timeout(300)
         page.once("dialog", lambda d: d.accept())
-        btn.first.click()
+        self._click(btn.first, "保存ボタン")
         page.wait_for_timeout(3000)
         page.keyboard.press("Escape")
         # 保存できたかは、箱に「時間付け」の印が付いたかで確かめる
