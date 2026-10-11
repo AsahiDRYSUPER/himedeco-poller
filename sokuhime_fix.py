@@ -58,6 +58,7 @@ JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
 PUBLIC_RAW = os.environ.get("PUBLIC_RAW", "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/data")
 LOG_FILE = OUT_DIR / "sokuhime.enc.json"
+STATUS_FILE = OUT_DIR / "sokuhime_status.json"   # 毎回の「生きている印」（名前なし。ボードの「最終確認 ◯分前」と、失敗した時のスマホ通知に使う）
 SHOPS = {
     "cg_kirakira": "キラキラ学園", "s_matikado": "街角レディ", "mrs_orange": "オレンジな気持ち",
     "venus_okayama": "VENUS", "potya_reen": "ぽちゃりーん", "torori_angel": "とろ〜りAngel",
@@ -345,22 +346,66 @@ def badge_check(people, now):
         print(f"  CTIで {shop} の {len(names)}人 → ヘブンの出勤一覧にいる店: {hits}")
 
 
+# ---------- 生きている印と、失敗の知らせ ----------
+def load_status():
+    try:
+        src = STATUS_FILE.read_text(encoding="utf-8") if STATUS_FILE.exists() else requests.get(f"{PUBLIC_RAW}/sokuhime_status.json", timeout=15).text
+        return json.loads(src)
+    except Exception:
+        return {}
+
+
+def write_status(now, **fields):
+    """毎回書く。ボードが「最終確認 ◯分前」を出し、15分以上止まっていれば赤くする。"""
+    st = load_status()
+    st.update({"at": now.isoformat(timespec="seconds")}, **fields)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    STATUS_FILE.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+    return st
+
+
+def notify_failures(now, st, new):
+    """CTIかヘブンで押せなかった子がいたら、スマホに知らせる（30分に1回まで。名前は入れない。中身はボードで）。"""
+    fails = [e for e in new if e.get("ok") is False or e.get("cti_ok") is False]
+    if not fails:
+        return
+    last = st.get("notified_at", "")
+    if last and (now - datetime.fromisoformat(last)).total_seconds() < 1800:
+        return
+    try:
+        from watch_chat import post_ntfy
+        post_ntfy("即ヒメ：押せなかった子がいます", f"{len(fails)}件（ヘブン {sum(1 for e in fails if e.get('ok') is False)}・CTI {sum(1 for e in fails if e.get('cti_ok') is False)}）。ボードの「即ヒメ」で中身を確認してください", {"Tags": "warning"})
+        st["notified_at"] = now.isoformat(timespec="seconds")
+        STATUS_FILE.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print("通知できず:", type(e).__name__)
+
+
 # ---------- 本体 ----------
 def run(now=None, dry=False, only=None):
     now = now or datetime.now(JST)
     nm = now_minutes(now)
     if not (OPEN_MIN <= nm < CLOSE_MIN):
         print(f"即ヒメ: 営業時間外（{now.strftime('%H:%M')}）なので何もしない")
+        write_status(now, open=False, set=0, heaven_fail=0, cti_targets=0, cti_ok=0, cti_fail=0, error="")
         return 0
     import cti_schedule
-    cti = cti_schedule.CTI().open()
+    t0 = time.time()
     try:
-        return _run(cti, now, nm, dry, only)
+        cti = cti_schedule.CTI().open()
+    except Exception as e:
+        write_status(now, open=True, error=f"CTIを開けない {type(e).__name__}", seconds=int(time.time() - t0))
+        raise
+    try:
+        return _run(cti, now, nm, dry, only, t0)
+    except Exception as e:
+        write_status(now, open=True, error=f"途中で止まった {type(e).__name__}", seconds=int(time.time() - t0))
+        raise
     finally:
         cti.close()
 
 
-def _run(cti, now, nm, dry, only):
+def _run(cti, now, nm, dry, only, t0=None):
     import cti_schedule
     people, head = cti.read(now)
     print(f"即ヒメ: CTI {head} → {cti_schedule.summary(people)}")
@@ -516,6 +561,12 @@ def _run(cti, now, nm, dry, only):
         for e in new:
             print("   ", e["shop"], "＊" * min(len(e["name"]), 4), e["before"], "→ 接客中", e["end"], e["why"], (f"＋CTIを時間付けに（確かめ: {e.get('cti_ok')} {e.get('cti_note')}）" if e.get("kind") == "時間付け" else ""))
         return 0
+    if not dry:
+        st = write_status(now, open=True, error="", seconds=int(time.time() - (t0 or time.time())), set=len(new),
+                          heaven_fail=sum(1 for e in new if e.get("ok") is False),
+                          cti_targets=sum(1 for e in new if e.get("kind") == "時間付け"),
+                          cti_ok=sum(1 for e in new if e.get("cti_ok")), cti_fail=sum(1 for e in new if e.get("cti_ok") is False))
+        notify_failures(now, st, new)
     if new:
         save_log(entries + new, now)
         print(f"即ヒメ: {len(new)}人に時間を付けた（失敗 {sum(1 for e in new if e['ok'] is False)}、CTIの時間付け {sum(1 for e in new if e.get('cti_ok'))}/{sum(1 for e in new if e.get('kind') == '時間付け')}）")
