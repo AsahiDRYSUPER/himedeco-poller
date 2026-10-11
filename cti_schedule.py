@@ -260,10 +260,17 @@ class CTI:
         closed = self._close_modals()
         box.first.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
         page.wait_for_timeout(400)
-        pt = self._safe_point(box)
-        if pt is None:
-            return False, "箱が画面に無い"
-        page.mouse.click(pt[0], pt[1], button="right")
+        # 右クリックは、箱の要素に直接「右クリックされた」という出来事を送る（上に赤い線などがかぶっていても届く。一希さん 10/11「箱を右クリックで開けば押せる」）
+        sent = box.first.evaluate("""e => { const r = e.getBoundingClientRect(); const x = r.left + r.width * 0.3, y = r.top + r.height * 0.5;
+          const o = {bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 2, buttons: 2};
+          e.dispatchEvent(new MouseEvent('mousedown', o)); e.dispatchEvent(new MouseEvent('mouseup', o)); e.dispatchEvent(new MouseEvent('contextmenu', o)); return true; }""")
+        page.wait_for_timeout(1200)
+        if not page.evaluate("() => Array.from(document.querySelectorAll('input[type=radio]')).some(r => r.getClientRects().length && /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || ''))"):
+            # 出なければ、実際のマウスで（箱の中でかぶっていない点）
+            pt = self._safe_point(box)
+            if pt is None:
+                return False, "箱が画面に無い"
+            page.mouse.click(pt[0], pt[1], button="right")
         # 簡易窓：見えている radio のうち、横の文字が「時間付け」のもの
         found = None
         for _ in range(20):
