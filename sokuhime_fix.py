@@ -372,6 +372,7 @@ def _run(cti, now, nm, dry, only):
     # ブラウザの土台はCTIのもの（cti.pw）を使い回す（Playwright を二重に起動すると止まる）
     browser = cti.pw.chromium.launch(headless=True)
     browser_logins = []
+    done_rids = set()           # この回でCTIの時間付けを押した予約
     for shopdir, label in SHOPS.items():
         if only and shopdir not in only:
             continue
@@ -450,6 +451,7 @@ def _run(cti, now, nm, dry, only):
                         cti_ok, cti_note = cti.mark_timed(tb["rid"], now=now)
                     except Exception as e:
                         cti_ok, cti_note = False, f"CTIで押せなかった {type(e).__name__} {str(e)[:80]}"
+                    done_rids.add(tb["rid"])
                     entry.update(ok=ok, note=note, cti_ok=cti_ok, cti_note=cti_note)
                     print(f"    時間付け {label} ＊＊ ヘブン:{ok} CTI:{cti_ok} {str(cti_note)[:120]}")
                     time.sleep(1.0)
@@ -488,13 +490,35 @@ def _run(cti, now, nm, dry, only):
         if st["page"] is not None:
             st["page"].context.close()
     browser.close()
+    # ヘブンの即ヒメに箱が無い子（出勤をテキストで入れている子・箱の名前が合わない子）でも、CTIの時間付けだけは押す（10/11 多摩なめねこさん）
+    label_of = {v: k for k, v in SHOPS.items()}
+    for person in people:
+        tb = timed_fix(person, nm)
+        if tb is None or tb["rid"] in done_rids:
+            continue
+        label = SHOPS.get(person["shop"], "店不明")
+        entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": person["name"], "id": "", "kind": "時間付け",
+                 "before": "ヘブンに箱なし", "end": hhmm(tb["e"]), "why": "入室・時間付けがまだ（CTIだけ）",
+                 "cti": [(hhmm(x["s"]) + "-" + hhmm(x["e"]) + ("/".join([""] + x["flags"]) if x["flags"] else "")) for x in person["bookings"]],
+                 "work": (hhmm(person["work"][0]) + "-" + hhmm(person["work"][1])) if person.get("work") else ""}
+        if dry:
+            entry.update(ok=None, note="見るだけ", cti_ok=None, cti_note="見るだけ")
+        else:
+            try:
+                cti_ok, cti_note = cti.mark_timed(tb["rid"], now=now)
+            except Exception as e:
+                cti_ok, cti_note = False, f"CTIで押せなかった {type(e).__name__} {str(e)[:80]}"
+            entry.update(ok=None, note="ヘブンに箱なし", cti_ok=cti_ok, cti_note=cti_note)
+            print(f"    時間付け(CTIだけ) {label} ＊＊ CTI:{cti_ok} {str(cti_note)[:100]}")
+            done_rids.add(tb["rid"])
+        new.append(entry)
     if dry:
         for e in new:
             print("   ", e["shop"], "＊" * min(len(e["name"]), 4), e["before"], "→ 接客中", e["end"], e["why"], (f"＋CTIを時間付けに（確かめ: {e.get('cti_ok')} {e.get('cti_note')}）" if e.get("kind") == "時間付け" else ""))
         return 0
     if new:
         save_log(entries + new, now)
-        print(f"即ヒメ: {len(new)}人に時間を付けた（失敗 {sum(1 for e in new if not e['ok'])}、CTIの時間付け {sum(1 for e in new if e.get('cti_ok'))}/{sum(1 for e in new if e.get('kind') == '時間付け')}）")
+        print(f"即ヒメ: {len(new)}人に時間を付けた（失敗 {sum(1 for e in new if e['ok'] is False)}、CTIの時間付け {sum(1 for e in new if e.get('cti_ok'))}/{sum(1 for e in new if e.get('kind') == '時間付け')}）")
     else:
         print("即ヒメ: 直す子はいなかった")
     return 0
