@@ -93,6 +93,7 @@ mm = S.match(bxs, [multi])
 assert mm["9"] is multi and mm["8"] is multi
 
 assert S.norm('城ヶ崎しずか【業界未経験】') == S.norm('城ケ崎しずか')
+assert S.norm('多摩なめねこ【優…') == '多摩なめねこ' and S.norm('多摩なめねこ【優等生】,しろねこRSP'.split(',')[0]) == '多摩なめねこ'
 
 # 先まで予約が詰まっている子：次までの空きが60分未満なら、その予約の終了までつなげる。退勤まで詰まっていれば受付終了
 full = {"name": "a", "work": (10 * 60, 24 * 60), "bookings": [
