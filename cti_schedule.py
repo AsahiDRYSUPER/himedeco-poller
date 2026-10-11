@@ -207,6 +207,25 @@ class CTI:
             except Exception as e2:
                 raise RuntimeError(f"{step}で押せない（{type(e1).__name__}／{type(e2).__name__}）")
 
+    def _answer_confirm(self, wait_ms=3000):
+        """画面の中に出る確認（「予約終了時刻が◯◯の出勤時間外です。このまま保存しますか？」など。ブラウザ標準のダイアログではない）に
+        「OK」で答える（10/11 写真で判明。これが未回答のままで保存されていなかった）。返す: 答えた文（無ければ ""）。"""
+        page = self.page
+        for _ in range(max(1, wait_ms // 300)):
+            info = page.evaluate("""() => {
+              const btns = Array.from(document.querySelectorAll('button, input[type=button], a')).filter(b => b.getClientRects().length && /^\\s*(OK|はい|了解)\\s*$/i.test(b.innerText || b.value || ''));
+              if (!btns.length) return null;
+              const b = btns[btns.length - 1]; const r = b.getBoundingClientRect();
+              let c = b; for (let i = 0; i < 4 && c.parentElement; i++) c = c.parentElement;
+              return {x: r.left + r.width / 2, y: r.top + r.height / 2, text: (c.innerText || '').replace(/\\s+/g, ' ').slice(0, 80)};
+            }""")
+            if info:
+                page.mouse.click(info["x"], info["y"])
+                page.wait_for_timeout(800)
+                return info["text"]
+            page.wait_for_timeout(300)
+        return ""
+
     def _close_modals(self):
         """見えている窓（.modal）を、閉じる・OK・キャンセルのボタンか Escape で閉じる。返す: 閉じた窓の見出し（数字は伏せる）。"""
         page = self.page
@@ -318,8 +337,11 @@ class CTI:
             return False, "時間付けの丸が見つからない"
         page.once("dialog", lambda d: d.accept())
         page.mouse.click(rb["x"], rb["y"])
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(800)
         shot(page, f"q3_{rid}_clicked.png")
+        answered = self._answer_confirm()
+        if answered:
+            shot(page, f"q3b_{rid}_answered.png")
         # まだ窓が開いていれば「更新」を押す
         still = page.evaluate("() => Array.from(document.querySelectorAll('input[type=radio]')).some(r => r.getClientRects().length && /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || ''))")
         if still:
@@ -335,7 +357,7 @@ class CTI:
                 return True, "時間付け（簡易窓）"
             time.sleep(0.7)
         shot(page, f"q4_{rid}_end.png")
-        return False, "押したが時間付けの印が付かない"
+        return False, "押したが時間付けの印が付かない" + (f"（確認「{answered[:40]}」にOK）" if answered else "")
 
     def mark_timed(self, rid, save=True, now=None):
         """まず右クリックの簡易窓で。だめなら大きな窓（編集→保存）で。"""
@@ -415,7 +437,9 @@ class CTI:
         page.wait_for_timeout(300)
         page.once("dialog", lambda d: d.accept())
         self._click(btn.first, "保存ボタン")
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(800)
+        self._answer_confirm()
+        page.wait_for_timeout(2000)
         page.keyboard.press("Escape")
         # 保存できたかは、箱に「時間付け」の印が付いたかで確かめる
         for _ in range(6):
