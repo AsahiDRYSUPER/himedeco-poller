@@ -449,6 +449,7 @@ def _run(cti, now, nm, dry, only):
                     except Exception as e:
                         cti_ok, cti_note = False, f"CTIで押せなかった {type(e).__name__} {str(e)[:80]}"
                     entry.update(ok=ok, note=note, cti_ok=cti_ok, cti_note=cti_note)
+                    print(f"    時間付け {label} ＊＊ ヘブン:{ok} CTI:{cti_ok} {str(cti_note)[:120]}")
                     time.sleep(1.0)
                 new.append(entry)
                 n_set += 1
