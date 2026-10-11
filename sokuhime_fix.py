@@ -265,7 +265,10 @@ def set_serving(page, shopdir, box, end_text):
     btn = page.query_selector(f'img.servingEndTime[id="{box["id"]}"], img.servingEndTimeUpdate[id="{box["id"]}"]')
     if btn is None:
         return False, "接客中ボタンが見つからない"
-    btn.click()
+    try:
+        btn.click(timeout=8000)
+    except Exception:
+        btn.evaluate("e => e.click()")     # 何かがかぶって押せない時は、ボタンに直接（10/11 春乃つぐみさんで30秒待って失敗）
     try:
         page.wait_for_selector("#servingEndHourList", state="visible", timeout=8000)
     except Exception:
@@ -278,6 +281,10 @@ def set_serving(page, shopdir, box, end_text):
     page.wait_for_timeout(1000)
     boxes, _, _ = read_standby(page, shopdir)
     after = next((b for b in boxes if b["id"] == box["id"]), None)
+    if after is None:
+        page.wait_for_timeout(2000)        # 画面の描き直しが遅い時があるので、もう一度だけ読む
+        boxes, _, _ = read_standby(page, shopdir)
+        after = next((b for b in boxes if b["id"] == box["id"]), None)
     if after is None:
         return False, "押した後に箱が見つからない"
     if after["serving"]:
