@@ -329,15 +329,16 @@ class CTI:
         page = self.page
         if not rid:
             return False, "箱のIDが無い"
-        # ヘブン側の操作で時間が経っているので、本日スケジュールを開き直してから押す（10/10 15:02 ダブルクリックが30秒待っても押せなかった）
         page.keyboard.press("Escape")
-        try:
-            self.read(now)
-        except Exception as e:
-            return False, f"開き直せない {type(e).__name__}"
         box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
         if box.count() == 0:
-            return False, "箱が見つからない"
+            try:
+                self.read(now)
+            except Exception as e:
+                return False, f"開き直せない {type(e).__name__}"
+            box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
+            if box.count() == 0:
+                return False, "箱が見つからない"
         # 画面に何かの窓（modal）が開いていたら、先に閉じる（10/10：modal-footer が箱の上にかぶって押せなかった）
         closed = self._close_modals()
         try:
