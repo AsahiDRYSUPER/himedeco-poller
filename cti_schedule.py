@@ -28,6 +28,16 @@ OFFICE_URL = f"https://cti2.fuzoku-fan.jp/office/#{OFFICE}"
 SHOP_BADGE = {"KG": "cg_kirakira", "OR": "mrs_orange", "PO": "potya_reen", "MK": "s_matikado",
               "TO": "torori_angel", "VE": "venus_okayama", "UC": "undercover"}
 LAST_BADGES = set()
+SHOTS = os.environ.get("SOKU_SHOTS", "")   # 調べる時だけ：ここに写真を残す（私的リポジトリの下調べ用）
+
+
+def shot(page, name):
+    if SHOTS:
+        try:
+            os.makedirs(SHOTS, exist_ok=True)
+            page.screenshot(path=os.path.join(SHOTS, name))
+        except Exception:
+            pass
 ROW_BADGES = []          # (店, 行の印の組) 店の印の当て方を確かめる用（名前は入れない）
 FLAG_WORDS = ("入室", "終了", "仮予約", "予約", "本", "時間付け")
 
@@ -260,9 +270,11 @@ class CTI:
             box = page.locator(f'apo-resv[resv-id="{rid}"] .resv-item')
             if box.count() == 0:
                 return False, "箱が見つからない"
+        shot(page, f"q0_{rid}_before.png")
         closed = self._close_modals()
         box.first.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
         page.wait_for_timeout(400)
+        shot(page, f"q1_{rid}_closed.png")
         # 右クリックは、箱の要素に直接「右クリックされた」という出来事を送る（上に赤い線などがかぶっていても届く。一希さん 10/11「箱を右クリックで開けば押せる」）
         sent = box.first.evaluate("""e => { const r = e.getBoundingClientRect(); const x = r.left + r.width * 0.3, y = r.top + r.height * 0.5;
           const o = {bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 2, buttons: 2};
@@ -300,12 +312,14 @@ class CTI:
         rb = page.evaluate("""() => { const rs = Array.from(document.querySelectorAll('input[type=radio]')).filter(r => r.getClientRects().length);
           const r = rs.find(r => /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || '')); if (!r) return null;
           const b = r.getBoundingClientRect(); return {x: b.left + b.width / 2, y: b.top + b.height / 2}; }""")
+        shot(page, f"q2_{rid}_popup.png")
         if not rb:
             page.keyboard.press("Escape")
             return False, "時間付けの丸が見つからない"
         page.once("dialog", lambda d: d.accept())
         page.mouse.click(rb["x"], rb["y"])
         page.wait_for_timeout(1500)
+        shot(page, f"q3_{rid}_clicked.png")
         # まだ窓が開いていれば「更新」を押す
         still = page.evaluate("() => Array.from(document.querySelectorAll('input[type=radio]')).some(r => r.getClientRects().length && /時間付け/.test(((r.closest('label') || r.parentElement) || {}).innerText || ''))")
         if still:
@@ -320,6 +334,7 @@ class CTI:
             if "時間付け" in txt:
                 return True, "時間付け（簡易窓）"
             time.sleep(0.7)
+        shot(page, f"q4_{rid}_end.png")
         return False, "押したが時間付けの印が付かない"
 
     def mark_timed(self, rid, save=True, now=None):
