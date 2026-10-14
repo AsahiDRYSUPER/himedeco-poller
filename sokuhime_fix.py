@@ -372,7 +372,11 @@ def write_status(now, **fields):
 
 
 def notify_failures(now, st, new):
-    """CTIかヘブンで押せなかった子がいたら、スマホに知らせる（30分に1回まで。名前は入れない。中身はボードで）。"""
+    """CTIかヘブンで押せなかった子がいたら、スマホに知らせる（30分に1回まで。名前は入れない。中身はボードで）。
+    2026-10-15 一希さん「即ヒメの更新の通知はいらない」→ 既定では送らない（環境変数 SOKUHIME_NTFY=1 の時だけ送る）。
+    押せなかった子はボードの「即ヒメ」で見られる。"""
+    if os.environ.get("SOKUHIME_NTFY", "").strip() != "1":
+        return
     fails = [e for e in new if e.get("ok") is False or e.get("cti_ok") is False]
     if not fails:
         return
