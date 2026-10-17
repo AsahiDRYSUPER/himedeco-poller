@@ -124,6 +124,29 @@ chk("8日 14時ｰ26時\n9日 14時ｰ26時\n10日14時ｰ26時\n個室お願い
     [(date(2026, 10, 8), "14:00", "26:00"), (date(2026, 10, 9), "14:00", "26:00"), (date(2026, 10, 10), "14:00", "26:00")], now=NOW4)
 for dash in ("‐", "‑", "―", "﹣"):
     chk(f"8日 14時{dash}20時", "cg_kirakira", "clear", [(date(2026, 10, 8), "14:00", "20:00")], now=NOW4)
+# 書いた日の時間を直すだけの「変更」は上げ直す（2026-10-17 キラ学の子。人に回されたまま放置された）
+NOW5 = datetime(2026, 10, 17, 21, 5)
+chk("22日17時から0時に変更お願いします", "cg_kirakira", "clear", [(date(2026, 10, 22), "17:00", "24:00")], now=NOW5)
+assert read_shift_reply("22日17時から0時に変更お願いします", NOW5, "cg_kirakira")["change"] is True
+assert read_shift_reply("22日 17時〜0時でお願いします", NOW5, "cg_kirakira")["change"] is False
+chk("22日の時間を17時〜23時に変えてください", "cg_kirakira", "clear", [(date(2026, 10, 22), "17:00", "23:00")], now=NOW5)
+chk("22日 19時から0時に時間変更お願いします🙏", "cg_kirakira", "clear", [(date(2026, 10, 22), "19:00", "24:00")], now=NOW5)
+# 紛らわしい文で突いて見つかった、勝手に違う出勤を上げてしまう形（2026-10-17）→ 全部人へ
+import json as _json, os as _os
+_rt = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "test_redteam_cases.json")
+if _os.path.exists(_rt):
+    for txt in _json.load(open(_rt, encoding="utf-8"))["bad"]:
+        r = read_shift_reply(txt, NOW5, "cg_kirakira")
+        if r["status"] in ("clear", "partial", "tentative"):
+            ok = False
+            print(f"✗ 人に回すはず: {txt!r} → {r['status']} {r['shifts']} {r['tentative']}")
+# 日をずらす変更・質問・代わりは今までどおり人へ
+for txt in ("22日を23日に変更お願いします", "22→23に変更で 17時〜0時", "22日から23日に変更 17時〜0時お願いします",
+            "22日17時〜0時に変更できますか？", "22日の代わりに23日 17時〜0時", "22日 1時間ずらして"):
+    r = read_shift_reply(txt, NOW5, "cg_kirakira")
+    if r["status"] != "unclear":
+        ok = False
+        print(f"✗ unclear のはず: {txt!r} → {r}")
 r = read_shift_reply("お疲れ様です 29日23時からラスト", NOW2, "cg_kirakira")
 assert r["display"] == ["29日 23:00〜ラスト"], r["display"]
 print("すべて通りました" if ok else "直すところがあります")

@@ -11,7 +11,8 @@
     clear     … 全部の日が clear
     partial   … clear の日があり、ほかに tentative / declined の日もある（clear の日だけ上げる）
     tentative … 時間の付いた日が無く、出勤予定（日にちだけ・未定）の日だけ → 備考「オキニトークでご確認ください。」を入れて返す
-    unclear   … 上げてよい日が無い、質問・「変更」がある、読めない所がある → 人に見せる
+    unclear   … 上げてよい日が無い、質問・日をずらす変更がある、読めない所がある → 人に見せる
+    （「22日17時から0時に変更」のように、書いた日の時間を直すだけの「変更」は clear。結果の change が True）
     none      … 出勤の話に見えない
 
 決まりの元: メイン作業場/projects/ヘブン運用・自動化/出勤返事の読み方.md（一希さんと決めたパターン集。直されたらここと test_*.py も直す）
@@ -54,8 +55,23 @@ def _has_time_left(txt):
         txt = rx.sub(" ", txt)
     return bool(re.search(r"\d", txt))
 HEDGE_RE = (re.compile(r"日か(?!ら)"), re.compile(r"時か(?!ら)"))   # 「26日か27日」「15時か18時」
-# 文全体を人に回す言葉（質問・前の返事の変更）
-GLOBAL = ("？", "?", "ですか", "ますか", "でしょうか", "変更", "変えて", "ずらし", "代わり", "かわり", "やっぱり")
+# 文全体を人に回す言葉（質問・日をずらす・打ち消す・時間の一部だけ変える・出勤ではない予定）
+# 2026-10-17 紛らわしい文で突いて、勝手に違う出勤を上げてしまう形を見つけて足した（「22日じゃなくて23日」「延長」「撮影」など）
+GLOBAL = ("？", "?", "ですか", "ますか", "でしょうか", "ずらし", "代わり", "かわり", "やっぱ",
+          "じゃな", "ではな", "でなく", "入れ替", "延長", "短縮", "早め", "遅ら", "上がりたい", "あがりたい",
+          "やめ", "辞め", "なしに", "無しに", "の分", "さっき", "間違", "→", "➡", "⇒",
+          "撮影", "撮り", "撮る", "撮っ", "写真", "髪型", "パネル", "美容", "引越", "引っ越", "業者", "面談")
+# 「変更」「変えて」でも、書いた日の時間を書いた時間に直すだけなら、そのまま上げ直す（返事は「変更しておいたよ」）
+# （2026-10-17 キラ学の子の「22日17時から0時に変更お願いします」が人に回されたまま放置された）
+# ただし形をしぼる：日が1つ・時間の範囲が1つ・時刻が2つまで・2時間より長い・休みや未定が無い・下の言葉が無い
+CHANGE = ("変更", "変えて")
+CHANGE_BLOCK = ("開始", "始まり", "終わり", "終了", "上がり", "あがり", "だけ", "個室", "寮", "部屋", "待機", "場所",
+                "名前", "源氏名", "写真", "髪", "迎え", "送り", "休み", "コース", "オプション", "料金")
+CHANGE_MIN_HOURS, CHANGE_MAX_LEN = 2, 80
+# 日をずらす書き方（「29を28に」「22日から23日に」「10/22を10/23に」「22日の17時〜0時を23日に」）は、元の日を消す判断が要るので人に回す
+MOVE_RE = re.compile(r"(?<!\d)\d{1,2}\s*日?\s*(?:を|→|⇒|->)\s*\d{1,2}\s*(?:日|に|へ)"
+                     r"|(?<!\d)\d{1,2}\s*日\s*(?:から|より)\s*\d{1,2}\s*日\s*(?:に|へ)"
+                     r"|を\s*(?:\d{1,2}\s*(?:日|/|月)|明日|あした|明後日|あさって)")
 
 _Z2H = str.maketrans("０１２３４５６７８９：／（）", "0123456789:/()")
 # 「12-20時」「12ー20」のような区切りは、数字にはさまれた時だけ「〜」にそろえる
@@ -175,7 +191,8 @@ def read_shift_reply(body, now=None, shop=None):
 
     def result(status, reason="", shifts=(), tentative=(), declined=(), display=(), hint=""):
         return {"status": status, "reason": reason, "shifts": list(shifts), "tentative": sorted(set(tentative)),
-                "declined": sorted(set(declined)), "display": list(display), "hint": hint}
+                "declined": sorted(set(declined)), "display": list(display), "hint": hint,
+                "change": _has(CHANGE, t)}
 
     clauses = [c for c in _CLAUSE.split(t) if c and c.strip()]
     groups, last_open = [], None      # group: {"days": [...], "range": None, "text": ""}
@@ -230,6 +247,17 @@ def read_shift_reply(body, now=None, shop=None):
     for w in GLOBAL:
         if w in t:
             return result("unclear", f"「{w}」がある")
+    if MOVE_RE.search(t):
+        return result("unclear", "日をずらす書き方")
+    is_change = _has(CHANGE, t)
+    if is_change:
+        if len(t) > CHANGE_MAX_LEN:
+            return result("unclear", "変更の文が長い")
+        for w in CHANGE_BLOCK:
+            if w in t:
+                return result("unclear", f"変更の中身が出勤の時間だけではないかも（「{w}」）")
+        if len(_ANY_TIME.findall(t)) > 2 or sum(1 for c in clauses for _, k, _ in _tokens(c) if k == "range") != 1:
+            return result("unclear", "変更：時間が2つ以上ある")
     if orphan_neg:
         return result("unclear", "日にちの無い所に「休み」などがある")
 
@@ -305,6 +333,10 @@ def read_shift_reply(body, now=None, shop=None):
             return result("tentative", "時間の決まった日が無い（出勤予定の日だけ）", tentative=tentative, declined=declined,
                           display=disp, hint="・".join(disp) + "は出勤予定")
         return result("unclear", "上げてよい日が無い（未定・休みだけ）", tentative=tentative, declined=declined, hint=hint)
+    if is_change:
+        dur = lambda s_, e_: (int(e_[:2]) * 60 + int(e_[3:])) - (int(s_[:2]) * 60 + int(s_[3:]))
+        if len(clear) != 1 or tentative or declined or dur(clear[0][1], clear[0][2]) <= CHANGE_MIN_HOURS * 60:
+            return result("unclear", "変更の形が読み切れない（日が2つ以上・休み・短い枠など）", hint=hint)
     status = "partial" if (tentative or declined) else "clear"
     return result(status, shifts=clear, tentative=tentative, declined=declined, display=display, hint=hint)
 

@@ -388,6 +388,7 @@ def main():
                 res = shift_auto.handle(clis.get(x["shopdir"]), x["shopdir"], x["shop"], x["gid"], x["name"],
                                         x["read"]["shifts"], now,
                                         tentative=x["read"].get("tentative", ()), display=x["read"].get("display"),
+                                        change=x["read"].get("change", False),
                                         extra_reply="")   # 個室・迎えのことは返事に書かない（一希さん 9/27）。通知で人が対応する
                 x["shift_res"] = res
                 # 個室の頼みなら、出勤を上げたあと個室も取る（2026-10-05 一希さん「個室の確保までがセット」）

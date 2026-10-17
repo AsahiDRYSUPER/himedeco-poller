@@ -233,7 +233,7 @@ def yobi(name):
     return n if n.endswith("さん") else n + "さん"
 
 
-def reply_text(name, shifts, extra="", tentative=(), display=None):
+def reply_text(name, shifts, extra="", tentative=(), display=None, change=False):
     if not shifts and tentative:
         # 出勤予定（時間未定・「多分」など）だけの時（2026-09-28 一希さん「出勤予定のシフトでアップして、ちゃんと返して」）
         days = list(display) if display else [f"{d.day}日" for d in sorted(set(tentative))]
@@ -246,7 +246,8 @@ def reply_text(name, shifts, extra="", tentative=(), display=None):
                 f"出られるのが決まったら「{how}」みたいに返してね😊") + (f"\n{extra}" if extra else "")
     parts = list(display) if display else [f"{d.day}日 {s}〜{e}" for d, s, e in shifts]
     tail = (f"{'・'.join(f'{d.day}日' for d in sorted(set(tentative)))}は決まったら教えてね😊" if tentative else "当日よろしくね😊")
-    return f"{yobi(name)}、ありがとう！ {'・'.join(parts)}で上げておいたよ🙌 {tail}" + (f"\n{extra}" if extra else "")
+    did = "に変更しておいたよ🙌" if change else "で上げておいたよ🙌"   # 時間の変更の頼み（2026-10-17）
+    return f"{yobi(name)}、ありがとう！ {'・'.join(parts)}{did} {tail}" + (f"\n{extra}" if extra else "")
 
 
 def clean(t):
@@ -275,7 +276,7 @@ def reply(cli, shopdir, gid, text):
     return clean(text)[:20] in clean(last.get("body"))
 
 
-def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply="", tentative=(), display=None):
+def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply="", tentative=(), display=None, change=False):
     """上げる → 「次回◯日出勤！」 → 本人に返す。返す: {"ok", "replied", "detail"}
     extra_reply: 返事の最後に足す一言（個室・迎えなど、人が対応する件がある時）"""
     now = now or datetime.now(JST)
@@ -293,7 +294,7 @@ def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply="", ten
     replied = False
     if all_ok and cli is not None:
         try:
-            replied = reply(cli, shopdir, gid, reply_text(name, shifts, extra_reply, tentative, display))
+            replied = reply(cli, shopdir, gid, reply_text(name, shifts, extra_reply, tentative, display, change))
         except Exception as ex:
             print(f"  {label} {gid}: 返信で {type(ex).__name__}")
         print(f"  {label} {gid}: 返信 {'OK' if replied else 'NG'}")
