@@ -64,7 +64,7 @@ an = {"name": "a", "work": (10 * 60, 24 * 60), "bookings": [
     {"s": 17 * 60 + 33, "e": 18 * 60 + 33, "flags": ["入室", "時間付け"], "rid": "1"},
     {"s": 19 * 60, "e": 20 * 60 + 20, "flags": [], "rid": "2"},
     {"s": 21 * 60, "e": 23 * 60, "flags": ["予約"], "rid": "3"}]}
-assert S.final_end(an, {"shift": "10:00-0:00"}, 18 * 60 + 33, "s_matikado")[0] == 24 * 60     # 街角アンさん：23:00から退勤まで60分→完売
+assert S.final_end(an, {"shift": "10:00-0:00"}, 18 * 60 + 33, "s_matikado")[0] == 24 * 60     # 街角の子：23:00から退勤まで60分→完売
 assert S.final_end(up, bx, 16 * 60 + 9, "torori_angel") == (16 * 60 + 9, "")                # とろ〜りは30分前まで取れる
 assert S.final_end(up, bx, 16 * 60 + 40, "torori_angel")[0] == 17 * 60
 assert S.final_end(up, {"shift": "12:00-17:30"}, 16 * 60 + 9, "mrs_orange") == (16 * 60 + 9, "")   # ヘブンの退勤が17:30なら81分残る
@@ -84,16 +84,16 @@ later = {"name": "y", "work": (12 * 60, 17 * 60), "bookings": [{"s": 16 * 60 + 3
 assert S.decide(w2, later, 15 * 60 + 10, 60) == (17 * 60, "80分後に開始") if False else True  # 予約が残っている子は別の決まり
 assert S.decide(w2, later, 15 * 60 + 10, 60) is None                           # 80分後の予約：まだ何もしない
 
-# 複数店の子：CTIの表記名「天音ねね【業界未経験】,アリスRSP」はどちらの名前でも合う
-assert S.aliases("天音ねね【業界未経験】,アリスRSP") == ["天音ねね", "アリスRSP"]
-multi = {"name": "天音ねね【業界未経験】,アリスRSP", "work": None, "bookings": []}
-bxs = [{"id": "9", "name": "天音ねね【業界未経験】", "serving": False, "waiting": True, "end": "", "shift": ""},
-       {"id": "8", "name": "アリスRSP", "serving": False, "waiting": True, "end": "", "shift": ""}]
+# 複数店の子：CTIの表記名「◯◯【業界未経験】,△△RSP」はどちらの名前でも合う
+assert S.aliases("試験花子【業界未経験】,試験RSP") == ["試験花子", "試験RSP"]
+multi = {"name": "試験花子【業界未経験】,試験RSP", "work": None, "bookings": []}
+bxs = [{"id": "9", "name": "試験花子【業界未経験】", "serving": False, "waiting": True, "end": "", "shift": ""},
+       {"id": "8", "name": "試験RSP", "serving": False, "waiting": True, "end": "", "shift": ""}]
 mm = S.match(bxs, [multi])
 assert mm["9"] is multi and mm["8"] is multi
 
-assert S.norm('城ヶ崎しずか【業界未経験】') == S.norm('城ケ崎しずか')
-assert S.norm('多摩なめねこ【優…') == '多摩なめねこ' and S.norm('多摩なめねこ【優等生】,しろねこRSP'.split(',')[0]) == '多摩なめねこ'
+assert S.norm('城ヶ崎試験【業界未経験】') == S.norm('城ケ崎試験')
+assert S.norm('試験猫子【優…') == '試験猫子' and S.norm('試験猫子【優等生】,試験猫RSP'.split(',')[0]) == '試験猫子'
 
 # 先まで予約が詰まっている子：次までの空きが60分未満なら、その予約の終了までつなげる。退勤まで詰まっていれば受付終了
 full = {"name": "a", "work": (10 * 60, 24 * 60), "bookings": [
