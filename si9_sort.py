@@ -42,8 +42,17 @@ PUBLIC_RAW = os.environ.get("PUBLIC_RAW", "https://raw.githubusercontent.com/Asa
 CTI_CACHE = Path(os.environ.get("RUNNER_TEMP") or "/tmp") / "cti_people.json"
 CTI_CACHE_MAX_SEC = 15 * 60
 
-# ヘブンの店 → (新着んの「店を選ぶ」画面の文字, 新着んの店番号)。まずキラ学だけ（1日見てから広げる）
-SHOPS = {"cg_kirakira": ("素人専門キラキラ学園", "896")}
+# ヘブンの店 → (新着んの「店を選ぶ」画面のリンクの文字（そのまま）, 新着んの店番号 #shop_id)。
+# 動かす店は si9_mode.json の shops で選ぶ（10/18 はキラ学だけ。1日見てから広げる）
+SHOPS = {
+    "cg_kirakira": ("素人専門キラキラ学園", "896"),
+    "undercover": ("ハイブリッド痴女性感UNDER COVER", "895"),
+    "potya_reen": ("ぽちゃりーん", "897"),
+    "s_matikado": ("素人専門 街角レディ", "2525"),
+    "venus_okayama": ("ハイブリットエステVENUS", "3045"),
+    "torori_angel": ("とろ～りAngel", "4326"),
+    "mrs_orange": ("素人ミセス・オレンジな気持ち", "4556"),
+}
 DAY_CUT_H = 6                       # 営業日の区切り：0:00〜5:59 は前の日の続き（24:00〜29:59）
 START_MIN, END_MIN = 8 * 60, 26 * 60  # 動く時間：8:00〜翌2:00
 BOX_FROM = 9 * 60                   # 即ヒメの箱を見るのは 9:00 から（即ヒメ直しと同じ。それより前は誰も待機していない）
