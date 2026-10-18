@@ -151,9 +151,10 @@ assert "即ヒメの箱が0" in S.inputs_trouble([], "", "", girls, week, T, 0)
 assert "即ヒメの箱が0" in S.inputs_trouble([], "", "", girls, week, at(2026, 10, 18, 10, 5), 0)      # 開店後は箱が無いとおかしい
 assert S.inputs_trouble([], "", "", girls, week, at(2026, 10, 18, 9, 30), 0) == ""                     # 開店前は箱が無くてもよい
 assert "1つも合わない" in S.inputs_trouble([{"short": "該当なし", "status": "waiting", "shift": None}], "", "", girls, week, T, 0)
-assert "合った子が少ない" in S.inputs_trouble(boxes, "", "", girls, week, T, 2)                        # 今日出勤9人のうち2人しか合わない
+assert "合った子が少ない" in S.inputs_trouble(boxes, "", "", girls, week, T, 2)                        # 箱6つのうち2つしか合わない
+assert S.inputs_trouble(boxes, "", "", girls, week, T, 3) == ""                                        # 半分なら送る
 assert S.inputs_trouble(boxes, "", "", girls, week, T, 5) == ""
-assert S.inputs_trouble(boxes, "", "", girls, week, at(2026, 10, 18, 10, 10), 2) == ""                 # 開店直後はまだ箱が少なくてもよい
+assert S.inputs_trouble(boxes[:3], "", "", girls, week, T, 1) == ""                                    # 箱が3つ以下なら数で止めない
 
 # ---------- 送るかどうか ----------
 cur_ids = [g["id"] for g in girls]

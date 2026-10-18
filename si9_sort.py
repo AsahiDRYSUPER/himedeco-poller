@@ -359,8 +359,9 @@ def inputs_trouble(boxes, box_err, absent_err, girls, week, now, matched):
         return f"今日出勤の子が{working}人いるのに、即ヒメの箱が0"
     if boxes and not matched:
         return "即ヒメの箱の名前が新着んの名前と1つも合わない"
-    if bm >= OPEN_MIN + 30 and working >= 4 and matched * 2 < working:
-        return f"即ヒメの箱と合った子が少ない（{matched}/{working}人）"
+    # 即ヒメに登録できる人数には上限があるので、出勤の全員が箱にいるとは限らない。箱のうち合った子が半分未満の時だけ止める
+    if len(boxes) >= 4 and matched * 2 < len(boxes):
+        return f"即ヒメの箱と合った子が少ない（{matched}/{len(boxes)}箱）"
     return ""
 
 
@@ -676,10 +677,13 @@ def read_results(page, sent_at, rows=None):
     for h, m, site, href in mine[:10]:
         page.goto(href, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(1500)
-        # 詳しい結果の行は「成功 ◯◯【新人期間】」のように、結果の言葉と名前が1つの欄に入っている（10/18 VENUSで確認）→ 行の先頭の言葉で数える
-        out[site] = page.evaluate("""() => { const n = {}; for (const tr of document.querySelectorAll('table tr')) {
-            const w = (tr.innerText || '').trim().split(/\\s+/)[0];
-            if (['成功', '失敗', '対象外', 'エラー'].includes(w)) n[w] = (n[w] || 0) + 1; } return n; }""")
+        # 詳しい結果の行は <td class="girl_result_label"><a><span class="btn">成功</span>名前</a></td> の形（10/18 VENUSで確認）。
+        # innerText では「成功名前」とくっつくので、先頭の言葉で見る
+        out[site] = page.evaluate("""() => { const n = {}; const words = ['成功', '失敗', '対象外', 'エラー'];
+            const cells = document.querySelectorAll('td.girl_result_label');
+            for (const td of (cells.length ? cells : document.querySelectorAll('table tr'))) {
+              const t = (td.innerText || '').replace(/\\s+/g, '');
+              const w = words.find(x => t.startsWith(x)); if (w) n[w] = (n[w] || 0) + 1; } return n; }""")
     return out
 
 
