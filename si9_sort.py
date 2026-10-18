@@ -684,16 +684,24 @@ def read_results(page, sent_at, rows=None):
 
 
 # ---------- 本体 ----------
-def confirm_last_send(page, rec, rows):
-    """前の回で送ったきり結果を確かめていない時、その結果を読んで決める（7サイトへ届いたなら ok_fp を付ける）"""
+def confirm_last_send(page, rec, rows, now):
+    """前の回で送ったきり結果を確かめていない時、その結果を読んで決める（全サイトへ届いたなら ok_fp を付ける）。
+    新着んがまだ送っている途中・詳しい結果にまだ数字が無い時は決めない（送ってから30分までは次の回に回す）"""
     if not rec.get("sent_at") or rec.get("done"):
         return
-    res = read_results(page, datetime.fromisoformat(rec["sent_at"]), rows)
+    sent_at = datetime.fromisoformat(rec["sent_at"])
+    if is_sorting(page) is not False:
+        print("  前の送信: 新着んがまだ送っている途中")
+        return
+    res = read_results(page, sent_at, rows)
     ok, why = result_ok(res, int(rec.get("sites") or 0))
+    if not ok and (why.startswith("成功が1つも") or "_" in res) and (now - sent_at).total_seconds() < 1800:
+        print(f"  前の送信: まだ結果が出ていない（{why}。次の回で確かめる）")
+        return
     rec.update(done=True, result=res, result_error=why)
     if ok:
         rec["ok_fp"] = rec.get("sent_fp")
-    print(f"  前の送信の結果: {'7サイトとも失敗なし' if ok else '確かめられない・失敗あり（' + why + '）'}")
+    print(f"  前の送信の結果: {'全サイト失敗なし' if ok else '確かめられない・失敗あり（' + why + '）'}")
 
 
 def box_counts(girls, boxes, week, today):
@@ -742,7 +750,7 @@ def run_shop(shopdir, now, mode, rec, persist):
             if mode == "send":
                 try:
                     rows = read_result_rows(page)
-                    confirm_last_send(page, rec, rows)
+                    confirm_last_send(page, rec, rows, now)
                     if someone_sent_after(now, rec.get("sent_at"), rows):
                         rec["ok_fp"] = None          # 私たちの後に人が送った → 7サイトの並びはもう私たちの並びとは限らない
                 except Exception as e:
