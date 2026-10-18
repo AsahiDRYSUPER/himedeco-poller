@@ -674,8 +674,10 @@ def read_results(page, sent_at, rows=None):
     for h, m, site, href in mine[:10]:
         page.goto(href, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(1500)
-        out[site] = page.evaluate("""() => { const n = {}; for (const td of document.querySelectorAll('td')) { const t = td.innerText.trim();
-            if (['成功', '失敗', '対象外', 'エラー'].includes(t)) n[t] = (n[t] || 0) + 1; } return n; }""")
+        # 詳しい結果の行は「成功 ◯◯【新人期間】」のように、結果の言葉と名前が1つの欄に入っている（10/18 VENUSで確認）→ 行の先頭の言葉で数える
+        out[site] = page.evaluate("""() => { const n = {}; for (const tr of document.querySelectorAll('table tr')) {
+            const w = (tr.innerText || '').trim().split(/\\s+/)[0];
+            if (['成功', '失敗', '対象外', 'エラー'].includes(w)) n[w] = (n[w] || 0) + 1; } return n; }""")
     return out
 
 
