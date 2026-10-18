@@ -820,8 +820,9 @@ def run_shop(shopdir, now, mode, st):
             if is_sorting(page) is False:
                 res = read_results(page, sent_at)
                 ok, why = result_ok(res, n_sites)
-                if "_" in res and not seen_busy:
-                    print(f"  {shopdir}: まだ結果が出ていない（次の回で確かめる）")
+                if ("_" in res and not seen_busy) or why.startswith("成功が1つも"):
+                    # 結果の行がまだ無い／詳しい結果にまだ数字が入っていない → 次の回で読み直す（送り直しはしない）
+                    print(f"  {shopdir}: まだ結果が出ていない（{why}。次の回で確かめる）")
                 else:
                     rec.update(done=True, result=res, result_error=why)
                     if ok:
