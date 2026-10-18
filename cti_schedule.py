@@ -163,9 +163,15 @@ class CTI:
                     f"（https始まり:{login_url.startswith('https://')} / cti2を含む:{'cti2.fuzoku-fan.jp' in login_url}）")
             raise RuntimeError("CTI_PASSWORD / CTI_LOGIN_URL が無いか形が違う: " + hint)
         self.pw = sync_playwright().start()
-        self.browser = self.pw.chromium.launch(headless=True)
-        self.page = self.browser.new_context(locale="ja-JP", timezone_id="Asia/Tokyo", viewport={"width": 1600, "height": 1200}).new_page()
-        login(self.page, login_url, password)
+        try:
+            self.browser = self.pw.chromium.launch(headless=True)
+            self.page = self.browser.new_context(locale="ja-JP", timezone_id="Asia/Tokyo", viewport={"width": 1600, "height": 1200}).new_page()
+            login(self.page, login_url, password)
+        except BaseException:
+            # ログインで落ちても Playwright を残さない（残ると、同じ実行の中の次のブラウザが「Sync API inside the asyncio loop」で落ちる）
+            self.close()
+            self.pw = self.browser = self.page = None
+            raise
         return self
 
     def close(self):
@@ -459,8 +465,9 @@ class CTI:
 
 def read_today(now=None):
     """CTIにログインして本日スケジュールを読むだけ（開いて・読んで・閉じる）。"""
-    c = CTI().open()
+    c = CTI()
     try:
+        c.open()
         return c.read(now)
     finally:
         c.close()

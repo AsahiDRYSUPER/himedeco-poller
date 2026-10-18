@@ -72,7 +72,7 @@ def classify(body, now=None, shop=None):
         return "decline"
     if any(w in t for w in NEG) or any(w in t for w in NEG2):
         return "other"
-    # 日にちや時間が少しでも書いてあるもの（unclear）は、読み違いを避けるため自動で聞き返さない（2026-09-27 つくしさんの件）
+    # 日にちや時間が少しでも書いてあるもの（unclear）は、読み違いを避けるため自動で聞き返さない（2026-09-27 ある子の件）
     if r["status"] == "none" and len(t) <= 80 and any(w in t for w in SHIFT_WORDS):
         return "ask_when"
     has_date = any(rx.search(_norm(t, shop)) for rx in (MD, DAYSPAN, DAYS, WEEKDAY))

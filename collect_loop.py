@@ -29,14 +29,18 @@ while True:
             subprocess.run([sys.executable, "sokuhime_fix.py"], timeout=600)
         except Exception as e:
             print("即ヒメ直しに失敗:", type(e).__name__)
-    # 新着んの並び替え（8:00〜翌2:00。並びが変わった時だけ、10分以上あけて7サイトへ送る。一希さん 10/18）。失敗してもボードの更新は止めない
-    if os.environ.get("SI9_SORT_SHOPS"):
+    if r.returncode == 0:
+        publish()
+    # 新着んの並び替え（8:00〜翌2:00。並びが変わった時だけ、10分以上あけて7サイトへ送る。一希さん 10/18）。失敗してもボードの更新は止めない。
+    # 切り替えは si9_sort.py が main の si9_mode.json を毎回読む。保存・送信をした回は印（out/si9_changed）を残すので、その記録をすぐ公開し直す
+    if os.environ.get("SINCHAKUN_ID") and time.time() + 480 < end + INTERVAL:
         try:
             subprocess.run([sys.executable, "si9_sort.py"], timeout=420)
         except Exception as e:
             print("新着んの並び替えに失敗:", type(e).__name__)
-    if r.returncode == 0:
-        publish()
+        if os.path.exists("out/si9_changed"):
+            os.remove("out/si9_changed")
+            publish()
     if time.time() + INTERVAL > end:
         break
     time.sleep(max(5, INTERVAL - (time.time() - t0)))

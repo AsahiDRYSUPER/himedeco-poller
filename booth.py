@@ -17,7 +17,7 @@ PREFIX = {"cg_kirakira": "K", "s_matikado": "M", "mrs_orange": "O", "venus_okaya
 
 
 def short_name(name):
-    """管理表の書き方に合わせる：「辻むう」→「むう」（名字＋かなの名前なら、かなの名前だけ）。"""
+    """管理表の書き方に合わせる：「試験ぽぽ」→「ぽぽ」（名字＋かなの名前なら、かなの名前だけ）。"""
     n = re.sub(r"[\[【(（].*?[\]】)）]", "", name or "").strip()
     n = re.sub(r"(?<=[ぁ-んァ-ヶー一-龠])(RSP|RS|SP)$", "", n)
     m = re.match(r"^[一-龠々]{1,3}([ぁ-んァ-ヶー]{1,6})$", n)

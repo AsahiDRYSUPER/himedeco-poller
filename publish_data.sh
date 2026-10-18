@@ -2,7 +2,8 @@
 # out/ の3つのファイルを、dataブランチ(履歴なし・毎回1コミット)へ強制的に反映する。
 set -e
 rm -rf /tmp/pub && mkdir /tmp/pub
-cp out/shops.json out/next_shifts.json /tmp/pub/
+# 手で動かす回（si9-check）ではボードのデータを作らないので、無ければ公開されている今のものを引き継ぐ
+for f in shops.json next_shifts.json; do cp out/$f /tmp/pub/ 2>/dev/null || curl -fsS "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/data/$f" -o /tmp/pub/$f; done
 cp out/todo.enc.json /tmp/pub/ 2>/dev/null || true
 cp out/requests.enc.json /tmp/pub/ 2>/dev/null || true   # 頼みごと(個室・待機場所・迎え)。名前を含むので暗号化済み
 cp out/chat_seen.json /tmp/pub/ 2>/dev/null || true

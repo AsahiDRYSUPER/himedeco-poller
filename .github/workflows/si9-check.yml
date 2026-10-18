@@ -8,6 +8,10 @@ on:
         description: "店（例 cg_kirakira）"
         type: string
         default: "cg_kirakira"
+      mode:
+        description: "dry＝案を作るだけ（既定）／send＝本当に保存して7サイトへ送る"
+        type: string
+        default: "dry"
 
 jobs:
   check:
@@ -21,7 +25,7 @@ jobs:
       - run: pip install requests beautifulsoup4 cryptography playwright
       - run: python3 -m playwright install --with-deps chromium
       - run: python3 test_si9_sort.py
-      - name: 並びの案を作る（見るだけ）
+      - name: 並びの案を作る（mode が send の時だけ保存して送る）
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
           CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
@@ -29,5 +33,10 @@ jobs:
           SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
           SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
           SI9_SORT_SHOPS: ${{ inputs.shops }}
-          OUT_DIR: /tmp/si9out
-        run: python3 si9_sort.py --dry
+          SI9_SORT_MODE: ${{ inputs.mode }}
+          TODO_KEY: ${{ secrets.TODO_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          python3 si9_sort.py
+          if [ "${{ inputs.mode }}" = "send" ] && [ -f out/si9_status.json ]; then bash publish_data.sh; fi
