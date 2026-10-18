@@ -166,9 +166,10 @@ assert S.need_send(order, cur_ids, {"ok_fp": f_cur}) == (True, True, "並びが�
 assert S.need_send(cur_ids, cur_ids, {"tries": {"fp": f_cur, "n": 2}})[1] is False     # 同じ並びは2回まで
 assert S.need_send(cur_ids, cur_ids, {"tries": {"fp": f_cur, "n": 1}})[1] is True
 assert S.need_send(order, cur_ids, {"tries": {"fp": f_cur, "n": 2}})[1] is True        # 違う並びなら回数は関係ない
-assert S.result_ok({"A": {"成功": 10, "対象外": 3}, "B": {"成功": 5}}, 2) == (True, "")
-assert S.result_ok({"A": {"成功": 10}, "B": {"成功": 5, "失敗": 1}}, 2)[0] is False
-assert S.result_ok({"A": {"成功": 10}}, 2)[0] is False                                  # サイトが足りない
+assert S.result_ok({"シティヘブンネット（A）": {"成功": 10, "対象外": 3}, "B": {"成功": 5}}, 2) == (True, "")
+assert S.result_ok({"シティヘブンネット（A）": {"成功": 10}, "B": {"成功": 5, "失敗": 1}}, 2) == (True, "他サイトで失敗 B")   # ヘブンが成功なら送れた扱い
+assert S.result_ok({"シティヘブンネット（A）": {"失敗": 10}, "B": {"成功": 5}}, 2)[0] is False
+assert S.result_ok({"A": {"成功": 10}}, 2)[0] is False                                  # ヘブンの行が無い
 assert S.result_ok({"_": "今回の分の結果の行が無い"}, 7)[0] is False
 assert S.result_ok({}, 7)[0] is False
 assert S.minutes_since(at(2026, 10, 18, 17, 14), 17, 10) == 4 and S.minutes_since(at(2026, 10, 19, 0, 5), 23, 58) == 7

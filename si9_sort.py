@@ -366,17 +366,23 @@ def inputs_trouble(boxes, box_err, absent_err, girls, week, now, matched):
 
 
 def result_ok(res, n_sites):
-    """更新結果が「全サイトで失敗なし」か。返す: (よいか, だめな理由)"""
+    """更新結果が「シティヘブンに届いた」か。返す: (よいか, だめな理由か注意)。
+    目的は表ページ（シティヘブン）の並びなので、ヘブンの行が成功なら「送れた」。他のサイトの失敗は注意として残す
+    （10/18 オレンジ：風俗じゃぱん・アンダーナビは新着ん側の設定で全員「失敗」。毎時の更新も前から失敗していて、こちらの送り方の問題ではない）"""
     if not isinstance(res, dict) or not res or "_" in res:
         return False, str((res or {}).get("_", "結果が無い"))[:60]
-    if len(res) < n_sites:
-        return False, f"結果のサイトが{len(res)}/{n_sites}"
-    bad = [k for k, v in res.items() if v.get("失敗") or v.get("エラー")]
-    if bad:
-        return False, "失敗あり " + "・".join(bad)[:80]
-    if not any(v.get("成功") for v in res.values()):
+    heaven = [k for k in res if "ヘブン" in k]
+    if not heaven:
+        if len(res) < n_sites:
+            return False, f"結果のサイトが{len(res)}/{n_sites}"
+        return False, "ヘブンの行が無い"
+    hv = res[heaven[0]]
+    if hv.get("失敗") or hv.get("エラー"):
+        return False, f"ヘブンで失敗 {hv.get('失敗') or hv.get('エラー')}人"
+    if not hv.get("成功"):
         return False, "成功が1つも数えられない"
-    return True, ""
+    bad = [k for k, v in res.items() if k not in heaven and (v.get("失敗") or v.get("エラー"))]
+    return True, ("他サイトで失敗 " + "・".join(bad)[:60]) if bad else ""
 
 
 # ---------- 記録（名前なし） ----------
