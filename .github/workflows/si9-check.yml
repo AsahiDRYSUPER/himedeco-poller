@@ -1,0 +1,33 @@
+name: si9-check
+
+# 新着んの並び替えを、手で1回だけ動かす（既定は「案を作るだけ」。保存も送信もしない）。名前はログに出ない。
+on:
+  workflow_dispatch:
+    inputs:
+      shops:
+        description: "店（例 cg_kirakira）"
+        type: string
+        default: "cg_kirakira"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests beautifulsoup4 cryptography playwright
+      - run: python3 -m playwright install --with-deps chromium
+      - run: python3 test_si9_sort.py
+      - name: 並びの案を作る（見るだけ）
+        env:
+          CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
+          CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
+          CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
+          SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
+          SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
+          SI9_SORT_SHOPS: ${{ inputs.shops }}
+          OUT_DIR: /tmp/si9out
+        run: python3 si9_sort.py --dry

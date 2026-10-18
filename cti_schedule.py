@@ -122,6 +122,7 @@ def parse(raw):
         ROW_BADGES.append((shop, tuple(b for b in r["badges"] if not b.startswith("報酬"))))
         # 出勤時間の末尾「Up」＝その時刻には仕事を終えていたい（上がり）。無ければ受付の締め（一希さん 10/10）
         out.append({"shop": shop, "name": r["name"], "work": span(r["work"]), "up": bool(re.search(r"up\s*$", r["work"] or "", re.I)),
+                    "absent": "当欠" in r["badges"],          # 当日欠勤（新着んの並び替えで使う）
                     "top": r["top"], "bottom": r["bottom"], "bookings": []})
     for it in raw["items"]:
         sp = span(it["time"])

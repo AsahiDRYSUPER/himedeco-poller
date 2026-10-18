@@ -29,6 +29,12 @@ while True:
             subprocess.run([sys.executable, "sokuhime_fix.py"], timeout=600)
         except Exception as e:
             print("即ヒメ直しに失敗:", type(e).__name__)
+    # 新着んの並び替え（8:00〜翌2:00。並びが変わった時だけ、10分以上あけて7サイトへ送る。一希さん 10/18）。失敗してもボードの更新は止めない
+    if os.environ.get("SI9_SORT_SHOPS"):
+        try:
+            subprocess.run([sys.executable, "si9_sort.py"], timeout=420)
+        except Exception as e:
+            print("新着んの並び替えに失敗:", type(e).__name__)
     if r.returncode == 0:
         publish()
     if time.time() + INTERVAL > end:

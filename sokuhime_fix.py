@@ -420,6 +420,13 @@ def _run(cti, now, nm, dry, only, t0=None):
     import cti_schedule
     people, head = cti.read(now)
     print(f"即ヒメ: CTI {head} → {cti_schedule.summary(people)}")
+    try:
+        # 新着んの並び替え（si9_sort.py）がCTIの当欠を使う。名前を含むので公開の out/ には置かない（この実行の中だけ）
+        cache = Path(os.environ.get("RUNNER_TEMP") or "/tmp") / "cti_people.json"
+        cache.write_text(json.dumps({"at": now.isoformat(), "people": [{"shop": p["shop"], "name": p["name"], "absent": bool(p.get("absent"))} for p in people]},
+                                    ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print("  CTIの控えを残せない:", type(e).__name__)
     unknown = sorted({b for b in cti_schedule.LAST_BADGES if b not in cti_schedule.SHOP_BADGE}) if hasattr(cti_schedule, "LAST_BADGES") else []
     if dry:
         badge_check(people, now)
