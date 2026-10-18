@@ -554,15 +554,35 @@ def read_sort(page):
     return shop_id, girls
 
 
+def parse_sorting(raw):
+    """新着んの is_sorting の返事（JSONの文字列。文字列の中にJSONが入っていることもある）→ True/False。読めなければ None"""
+    v = raw
+    for _ in range(3):
+        if isinstance(v, dict):
+            if "is_sorting" in v:
+                x = v["is_sorting"]
+                return x if isinstance(x, bool) else (str(x).lower() in ("true", "1"))
+            return None
+        if isinstance(v, str):
+            t = v.strip()
+            if not t.startswith(("{", "[", '"')):
+                return None
+            try:
+                v = json.loads(t)
+            except Exception:
+                return None
+        else:
+            return None
+    return None
+
+
 def is_sorting(page):
-    r = page.evaluate("""async () => { try { return JSON.stringify(await $.ajax({type: 'POST', url: '/ajax/girl/data.php', data: {method: 'is_sorting'}})); }
-        catch (e) { return 'ERR ' + e.status; } }""")
-    s = str(r).replace(" ", "")
-    if '"is_sorting":false' in s:
-        return False
-    if '"is_sorting":true' in s:
-        return True
-    return None          # 分からない
+    r = page.evaluate("""async () => { try { const r = await $.ajax({type: 'POST', url: '/ajax/girl/data.php', data: {method: 'is_sorting'}});
+        return typeof r === 'string' ? r : JSON.stringify(r); } catch (e) { return 'ERR ' + e.status; } }""")
+    v = parse_sorting(r)
+    if v is None:
+        print("  （is_sorting の返事が読めない:", re.sub(r"[^\w{}\[\]:,\"' ]", "", str(r))[:80], "）")
+    return v
 
 
 def jconfirm_yes(page, want, timeout=8000):

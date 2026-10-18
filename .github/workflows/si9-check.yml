@@ -13,6 +13,9 @@ on:
         type: string
         default: "dry"
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest

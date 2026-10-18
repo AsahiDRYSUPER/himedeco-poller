@@ -177,6 +177,12 @@ assert S.someone_sent_after(at(2026, 10, 18, 17, 40), "2026-10-18T17:10:00+09:00
 assert not S.someone_sent_after(at(2026, 10, 18, 17, 40), "", rows) and not S.someone_sent_after(at(2026, 10, 18, 17, 40), "2026-10-18T17:10:00+09:00", [])
 assert S.safe_err(RuntimeError("だめ\nCall log:\n  - 試験三号 の行")) == "RuntimeError: だめ"
 
+# ---------- 新着んの「送っている途中か」の返事 ----------
+assert S.parse_sorting('{"is_sorting":false}') is False and S.parse_sorting('{"is_sorting": true}') is True
+assert S.parse_sorting('"{\\"is_sorting\\":false}"') is False          # 文字列の中にJSON（JSON.stringify した時）
+assert S.parse_sorting({"is_sorting": False}) is False and S.parse_sorting({"is_sorting": "1"}) is True
+assert S.parse_sorting("ERR 500") is None and S.parse_sorting("<html>") is None and S.parse_sorting('{"other": 1}') is None and S.parse_sorting(None) is None
+
 # ---------- 動く子の数 ----------
 assert S.moved(["a", "b", "c"], ["a", "c", "b"]) == (2, 2) and S.moved(["a"], ["a"]) == (0, None)
 
