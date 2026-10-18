@@ -35,7 +35,7 @@ while True:
     # 切り替えは si9_sort.py が main の si9_mode.json を毎回読む。保存・送信をした回は印（out/si9_changed）を残すので、その記録をすぐ公開し直す
     if os.environ.get("SINCHAKUN_ID") and time.time() + 480 < end + INTERVAL:
         try:
-            subprocess.run([sys.executable, "si9_sort.py"], timeout=420)
+            subprocess.run([sys.executable, "si9_sort.py"], timeout=480)
         except Exception as e:
             print("新着んの並び替えに失敗:", type(e).__name__)
         if os.path.exists("out/si9_changed"):

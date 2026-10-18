@@ -468,7 +468,9 @@ def si9_login(page, shop_name):
     if page.query_selector("input[name=login_password]"):
         raise RuntimeError("新着んにログインできない（ログイン画面のまま）")
     if "shopSelect" in page.url:
-        ok = page.evaluate("(t) => { const a = Array.from(document.querySelectorAll('a')).find(a => (a.innerText || '').trim() === t); if (!a) return false; a.click(); return true; }", shop_name)
+        # リンクの文字は「素人専門 街角レディ」のように空白の形（半角・全角・改行）が揺れるので、空白を全部外して比べる（10/18 街角で合わなかった）
+        ok = page.evaluate("""(t) => { const z = s => (s || '').replace(/[\\s\\u3000]+/g, '');
+            const a = Array.from(document.querySelectorAll('a')).find(a => z(a.innerText) === z(t)); if (!a) return false; a.click(); return true; }""", shop_name)
         if not ok:
             raise RuntimeError("新着んの店を選ぶ画面に店が見つからない")
         page.wait_for_load_state("domcontentloaded")
@@ -705,10 +707,10 @@ def box_counts(girls, boxes, week, today):
     return len(got), unmatched
 
 
-def run_shop(shopdir, now, mode, st):
+def run_shop(shopdir, now, mode, rec, persist):
+    """1店ぶん。rec＝この店の記録（読み書き）。persist()＝途中で打ち切られても残したい時に呼ぶ（記録を書く）"""
     from playwright.sync_api import sync_playwright
     shop_name, shop_no = SHOPS[shopdir]
-    rec = st.setdefault("shops", {}).setdefault(shopdir, {})
     rec.update(at=now.isoformat(timespec="seconds"), error="", skipped="")
     if mode == "send" and not gap_ok(now, rec.get("sent_at")):
         print(f"  {shopdir}: 前に送ってから10分たっていないので、今回は見ない")
@@ -795,7 +797,7 @@ def run_shop(shopdir, now, mode, st):
             f = fp(order)
             if do_save:
                 rec.update(saved_at=datetime.now(JST).isoformat(timespec="seconds"), saved_fp=f)
-                save_status(st)                  # 途中で打ち切られても、保存したことは残す
+                persist()                        # 途中で打ち切られても、保存したことは残す
                 mark_changed()
                 if not save_order(page, order):
                     raise RuntimeError("保存した並びが案と違う（送らない）")
@@ -804,11 +806,11 @@ def run_shop(shopdir, now, mode, st):
             sent_at = datetime.now(JST)
             rec.update(sent_at=sent_at.isoformat(timespec="seconds"), sent_fp=f, sent_moved=n_moved, tries={"fp": f, "n": n_try},
                        done=False, result={}, result_error="", sites=0)
-            save_status(st)                      # 送り始めた時刻を先に残す（打ち切られても10分あける）
+            persist()                            # 送り始めた時刻を先に残す（打ち切られても10分あける）
             mark_changed()
             n_sites = send_sites(page, len(girls))
             rec["sites"] = n_sites
-            save_status(st)
+            persist()
             print(f"  {shopdir}: " + ("並び順を保存して、" if do_save else "保存済みの並びを、") + f"{n_sites}サイトへ送った（この並びの{n_try}回目）")
             seen_busy = False
             t0 = time.time()
@@ -837,14 +839,119 @@ def run_shop(shopdir, now, mode, st):
             b.close()
 
 
+REC_DIR = Path(os.environ.get("RUNNER_TEMP") or "/tmp")
+CHILD_TIMEOUT = 300          # 1店の上限（秒）
+PARALLEL = 4                 # 同時に開く店の数
+STAGGER_SEC = 3              # 店ごとの開始をずらす（ヘブン・新着んに一度に押しかけない）
+
+
+def rec_path(shopdir):
+    return REC_DIR / f"si9_rec_{shopdir}.json"
+
+
+def prefetch_cti(now):
+    """親が1回だけCTIを読んで控えを残す（子が店ごとにCTIへログインしないように）。即ヒメ直しの控えが新しければ何もしない"""
+    try:
+        c = json.loads(CTI_CACHE.read_text(encoding="utf-8"))
+        if (now - datetime.fromisoformat(c["at"])).total_seconds() <= CTI_CACHE_MAX_SEC:
+            return "即ヒメ直しの読んだもの"
+    except Exception:
+        pass
+    if not os.environ.get("CTI_PASSWORD"):
+        return "CTIの鍵なし"
+    import cti_schedule
+    rows, _ = cti_schedule.read_today(now)
+    CTI_CACHE.write_text(json.dumps({"at": now.isoformat(), "people": [{"shop": p["shop"], "name": p["name"], "absent": bool(p.get("absent"))} for p in rows]},
+                                    ensure_ascii=False), encoding="utf-8")
+    return "CTIを読んだ"
+
+
+def child_main(shopdir, mode, now):
+    """1店だけ動かす（親から呼ばれる）。記録は自分の店のファイルに書く"""
+    st = load_status()
+    rec = dict(st.get("shops", {}).get(shopdir, {}))
+    def persist():
+        rec_path(shopdir).write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+    try:
+        rc = run_shop(shopdir, now, mode, rec, persist)
+    except Exception as e:
+        rec["error"] = safe_err(e)
+        print(f"  {shopdir}: 止めた {rec['error']}")
+        rc = 1
+    persist()
+    return rc
+
+
+def merge_recs(st, shops):
+    changed = False
+    for sd in shops:
+        try:
+            rec = json.loads(rec_path(sd).read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if st.setdefault("shops", {}).get(sd) != rec:
+            st["shops"][sd] = rec
+            changed = True
+    return changed
+
+
+def run_parallel(shops, mode, now):
+    """店ごとに別の実行を同時に（最大 PARALLEL）。子の出力は終わった順にまとめて出す。記録は出てきた順にまとめて書く"""
+    import subprocess
+    for sd in shops:
+        try:
+            rec_path(sd).unlink()
+        except Exception:
+            pass
+    st = load_status()
+    pending = list(shops)
+    running = {}       # shopdir → (Popen, 開始時刻)
+    rc = 0
+    last_start = 0.0
+    t_begin = time.time()
+    while pending or running:
+        while pending and len(running) < PARALLEL and time.time() - last_start >= (STAGGER_SEC if running else 0):
+            sd = pending.pop(0)
+            p = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--shop", sd, "--mode", mode, "--now", now.isoformat()],
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            running[sd] = (p, time.time())
+            last_start = time.time()
+        time.sleep(1.0)
+        for sd, (p, t0) in list(running.items()):
+            if p.poll() is None and time.time() - t0 > CHILD_TIMEOUT:
+                p.kill()
+                print(f"  {sd}: {CHILD_TIMEOUT}秒で打ち切った")
+            if p.poll() is not None:
+                out = p.stdout.read() if p.stdout else ""
+                print(out.rstrip() or f"  {sd}: （出力なし）")
+                rc |= (p.returncode or 0) != 0
+                del running[sd]
+        if merge_recs(st, shops):
+            st["at"] = now.isoformat(timespec="seconds")
+            st["mode"] = mode
+            save_status(st)
+    merge_recs(st, shops)
+    st["at"] = now.isoformat(timespec="seconds")
+    st["mode"] = mode
+    save_status(st)
+    print(f"新着んの並び替え: {len(shops)}店 {int(time.time() - t_begin)}秒")
+    return 1 if rc else 0
+
+
 def main():
+    args = sys.argv[1:]
+    if "--shop" in args:
+        shopdir = args[args.index("--shop") + 1]
+        mode = args[args.index("--mode") + 1] if "--mode" in args else "dry"
+        now = datetime.fromisoformat(args[args.index("--now") + 1]) if "--now" in args else datetime.now(JST)
+        return child_main(shopdir, mode, now)
     now = datetime.now(JST)
     try:
         shops, mode = live_config()
     except Exception as e:
         print(f"新着んの並び替え: 切り替えの設定が読めないので何もしない（{safe_err(e, 80)}）")
         return 0
-    if "--dry" in sys.argv:
+    if "--dry" in args:
         mode = "dry"
     if not shops or mode not in ("send", "dry"):
         print(f"新着んの並び替え: 止めてある（店 {shops}・mode {mode or 'なし'}）")
@@ -852,21 +959,12 @@ def main():
     if not in_window(now):
         print(f"新着んの並び替え: 時間外（{now.strftime('%H:%M')}。動くのは 8:00〜翌2:00）")
         return 0
-    st = load_status()
-    rc = 0
-    print(f"新着んの並び替え（{'送る' if mode == 'send' else '案を作るだけ'}）")
-    for shopdir in shops:
-        try:
-            rc |= run_shop(shopdir, now, mode, st)
-        except Exception as e:
-            msg = safe_err(e)
-            print(f"  {shopdir}: 止めた {msg}")
-            st.setdefault("shops", {}).setdefault(shopdir, {})["error"] = msg
-            rc = 1
-    st["at"] = now.isoformat(timespec="seconds")
-    st["mode"] = mode
-    save_status(st)
-    return rc
+    print(f"新着んの並び替え（{'送る' if mode == 'send' else '案を作るだけ'}・{len(shops)}店を同時に）")
+    try:
+        print(f"  CTIの当欠: {prefetch_cti(now)}")
+    except Exception as e:
+        print(f"  CTIの当欠が読めない（各店は送らない）: {safe_err(e, 80)}")
+    return run_parallel(shops, mode, now)
 
 
 if __name__ == "__main__":
