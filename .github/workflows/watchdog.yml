@@ -1,0 +1,36 @@
+name: watchdog
+
+# クラウド自動化の見張り（読むだけ）。1時間に1回、裏姫デコ更新と新着んの並び替えが止まっていないかを見て、
+# 止まっていればスマホ（ntfy）へ知らせる。非公開リポジトリの実行枠が尽きても、ここ（公開・無料）は動く。2026-10-20
+
+on:
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "今すぐ結果を通知する（異常が無くても1通送る）"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "12 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests > /dev/null
+      - name: 止まっていないかを見る
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python3 watchdog.py ${{ inputs.test && '--test' || '' }} || true
