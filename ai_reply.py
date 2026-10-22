@@ -154,19 +154,24 @@ def ask(shop_label, shopdir, name, history, latest):
     if _state["calls"] >= MAX_PER_RUN:
         return None, "cap"
     _state["calls"] += 1
-    import anthropic
-    client = anthropic.Anthropic()
     user = (f"店：{shop_label}（YOASOBIヘブン：{'使っている' if shopdir in YOASOBI_SHOPS else '使っていない'}）\n"
             f"相手の女の子の呼び方：{name}\n"
             f"今の日時：{datetime.now(JST).strftime('%Y-%m-%d %H:%M')}\n\n"
             f"直近のやりとり（古い順）：\n{history or '（読めなかった）'}\n\n"
             f"今回返事をする女の子の発言：\n{latest}\n\n"
             "この発言にどう返すかを、決まりに沿って JSON で答えてください。")
+    return _call(system_prompt(), user, CAST_SCHEMA)
+
+
+def _call(system, user, schema):
+    """Claude に1回聞いて (dict, 理由) を返す。失敗の理由は文字（鍵は出さない）。"""
+    import anthropic
+    client = anthropic.Anthropic()
     kw = dict(
         model=MODEL,
         max_tokens=16000,
-        system=[{"type": "text", "text": system_prompt(), "cache_control": {"type": "ephemeral"}}],
-        output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": CAST_SCHEMA}},
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": schema}},
         messages=[{"role": "user", "content": user}],
     )
     try:
@@ -207,6 +212,64 @@ def ask(shop_label, shopdir, name, history, latest):
     except Exception:
         return None, "形が壊れていた"
     return data, "ok"
+
+
+# ---- お客さん（夜遊びヘブンの多言語チャット）向け。2026-10-23 一希さん「送られた時だけ通知が入って、それにAIが反応する」 ----
+CUSTOMER_FILE = Path(__file__).with_name("yoasobi_knowledge.md")
+CUSTOMER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "category": {"type": "string", "enum": ["A", "B", "C"]},
+        "action": {"type": "string", "enum": ["reply", "draft", "none"]},
+        "reply": {"type": "string"},
+        "owner_note": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+    "required": ["category", "action", "reply", "owner_note", "reason"],
+    "additionalProperties": False,
+}
+CUSTOMER_RULES = """
+## 返し方（JSONの欄）
+- category：A＝決まりで答えられる（派遣できるホテルやエリア・料金・支払い・入室の手順・営業時間・サービスの説明・挨拶への返事）／B＝お店の判断が要る（予約の確定・日時・女の子の出勤や指名・値引き・延長・キャンセル・変更・クレーム・住所だけ送ってきた）／C＝読み切れない
+- action：reply＝この文を送ってよい（Aで、決まりの中だけで答えられる時）／draft＝下書き（Bか、決まりに無いことを含む時。受付が見て送る）／none＝返事は要らない（お礼だけ・ボットのメニュー操作だけ）
+- reply：お客さんへの文（日本語で書く。チャットがお客さんの言葉に自動で訳す。短く、ていねいに、1通で200字以内。絵文字は1つまで）。none の時は空
+- owner_note：受付・一希さんに知らせること（Bの中身の要約、決まりに無い質問、怒っている等。日本語）。無ければ空
+- reason：なぜその category / action か（1文）
+"""
+
+
+def customer_prompt():
+    know = CUSTOMER_FILE.read_text(encoding="utf-8") if CUSTOMER_FILE.exists() else ""
+    return know + "\n\n" + CUSTOMER_RULES
+
+
+def ask_customer(shop_label, name, history, latest):
+    """夜遊びヘブンのお客さんの発言にどう返すかを Claude に聞く。返す: (dict, 理由)。女の子向けの非公開メモは渡さない。"""
+    if not enabled():
+        return None, "off"
+    if _state["calls"] >= MAX_PER_RUN:
+        return None, "cap"
+    _state["calls"] += 1
+    user = (f"店：{shop_label}\n相手：{name}（訪日外国人のお客さん。チャットは自動翻訳）\n"
+            f"今の日時：{datetime.now(JST).strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"直近のやりとり（古い順）：\n{history or '（無し）'}\n\n"
+            f"今回返すお客さんの発言：\n{latest}\n\n"
+            "決まりに沿って JSON で答えてください。")
+    return _call(customer_prompt(), user, CUSTOMER_SCHEMA)
+
+
+def check_customer(data):
+    """お客さんに送ってよい形か。返す: (送るか, 理由)"""
+    if data.get("action") != "reply" or data.get("category") != "A":
+        return False, data.get("action") or "no_action"
+    reply = (data.get("reply") or "").strip()
+    if not reply:
+        return False, "返事が空"
+    if len(reply) > 300:
+        return False, "長すぎる"
+    if re.search(r"(割引|値引|discount|free|無料|タダ)", reply, re.I):
+        return False, "値引きの言葉"
+    return True, "ok"
 
 
 def check(data):
