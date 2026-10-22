@@ -1,0 +1,47 @@
+name: yoasobi-watch
+
+# 夜遊びヘブン（外国人向けサイト）の多言語チャットの見張り：未返信を読んで分けて、ntfyで知らせる（送信はまだしない）。
+# 2026-10-22。手で起動して確かめてから、10分ごとの定期にする。
+
+on:
+  workflow_dispatch:
+    inputs:
+      shops:
+        description: "見る店（shopdirをカンマ区切り。既定は cg_kirakira）"
+        type: string
+        default: "cg_kirakira"
+  repository_dispatch:
+    types: [yoasobi-chat]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: yoasobi-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests beautifulsoup4 playwright > /dev/null
+      - run: python3 -m playwright install --with-deps chromium > /dev/null
+      - name: 見張る
+        env:
+          CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          YOASOBI_SHOPS: ${{ inputs.shops || 'cg_kirakira' }}
+          AUTO_YOASOBI: ${{ vars.AUTO_YOASOBI || 'off' }}
+        run: python3 yoasobi_watch.py || true
+      - name: 記録を保存
+        if: always()
+        run: |
+          git config user.name "yoasobi-bot"
+          git config user.email "actions@github.com"
+          git add yoasobi_state.json 2>/dev/null || true
+          git diff --cached --quiet || { git commit -m "yoasobi state" && git pull --rebase -q && git push; } || true
