@@ -28,7 +28,7 @@ MAX_REPLY_CHARS = 480           # 姫デコチャット1通は500字まで
 FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-fable-5", "claude-sonnet-5-5")
 YOASOBI_SHOPS = ("cg_kirakira", "s_matikado", "mrs_orange", "potya_reen")
 
-_state = {"calls": 0, "disabled": False}
+_state = {"calls": 0, "disabled": False, "last_error": ""}
 
 LANG = {"type": "string", "enum": ["0", "1", "2", "3", "4"]}
 CAST_SCHEMA = {
@@ -167,10 +167,15 @@ def ask(shop_label, shopdir, name, history, latest):
         messages=[{"role": "user", "content": user}],
     )
     try:
-        if MODEL in FALLBACK_MODELS:
-            resp = client.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kw)
-        else:
-            resp = client.messages.create(**kw)
+        try:
+            if MODEL in FALLBACK_MODELS:
+                resp = client.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kw)
+            else:
+                resp = client.messages.create(**kw)
+        except anthropic.APIError as e:
+            # 中身は API のエラー文だけ（鍵は入らない）。--check の時に表示する
+            _state["last_error"] = f"{type(e).__name__}: {str(getattr(e, 'message', '') or e)[:300]}"
+            raise
     except anthropic.AuthenticationError:
         _state["disabled"] = True
         return None, "鍵が無効"
@@ -214,3 +219,31 @@ def check(data):
     if re.search(r"(パスワード|暗証番号|口座番号|クレジットカード番号)", reply):
         return False, "送ってはいけない言葉"
     return True, "ok"
+
+
+def selfcheck():
+    """鍵とモデルが通るかを、作り話のやりとりで1回だけ試す。誰にも送らない。
+    公開リポジトリなので、ログには結果の種類・長さ・数だけ出す（返事の中身・メモの中身は出さない）。"""
+    print("AI: 鍵", "あり" if (os.environ.get("ANTHROPIC_API_KEY") or "").strip() else "なし",
+          "/ 非公開メモ", "あり" if (os.environ.get("AI_PRIVATE_NOTES") or "").strip() else "なし",
+          "/ モデル", MODEL, "/ 深さ", EFFORT)
+    if not enabled():
+        print("AI: ❌ 動かない（鍵が無いか、AI_REPLY=off）")
+        return 1
+    data, why = ask("キラキラ学園", "cg_kirakira", "テストさん",
+                    "[10/23 10:00 店] 外国人のお客さんもOKにしてみない？",
+                    "外国人OKでお願いします！英語は挨拶くらいならできます")
+    if not data:
+        print("AI: ❌", why, "|", _state["last_error"] or "-")
+        return 1
+    ok, w = check(data)
+    y = data.get("yoasobi") or {}
+    print("AI: ✅ つながった / action", data.get("action"), "/ 送れる形", ok, w,
+          "/ 返事", len(data.get("reply") or ""), "字 / 外国人OK", y.get("wants_listed"), "/ 英語★", y.get("lang_en"))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    if "--check" in sys.argv:
+        raise SystemExit(selfcheck())
