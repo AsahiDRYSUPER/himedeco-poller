@@ -39,13 +39,11 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install requests beautifulsoup4 playwright > /dev/null
-      - id: pw
-        continue-on-error: true
-        timeout-minutes: 6
-        run: python3 -m playwright install --with-deps chromium > /dev/null
-      - if: steps.pw.outcome == 'failure'
-        timeout-minutes: 8
-        run: python3 -m playwright install --with-deps chromium > /dev/null
+      - name: ブラウザを用意する（apt のロックが空くのを待ってから入れる。2026-10-23 ロック待ちで固まる・失敗する回があった）
+        timeout-minutes: 12
+        run: |
+          for i in $(seq 1 100); do sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock >/dev/null 2>&1 || break; sleep 5; done
+          python3 -m playwright install --with-deps chromium > /dev/null || python3 -m playwright install chromium > /dev/null
       - name: 見張る
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
