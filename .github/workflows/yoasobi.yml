@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests beautifulsoup4 playwright > /dev/null
+      - run: pip install requests beautifulsoup4 playwright "anthropic==0.125.0" > /dev/null   # AI（お客さんへの返事）に anthropic が要る 2026-10-23
       - name: ブラウザを用意する（apt のロックが空くのを待ってから入れる。2026-10-23 ロック待ちで固まる・失敗する回があった）
         timeout-minutes: 12
         run: |
