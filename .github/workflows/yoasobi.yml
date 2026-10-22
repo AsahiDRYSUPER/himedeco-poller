@@ -1,7 +1,7 @@
 name: yoasobi-watch
 
 # 夜遊びヘブン（外国人向けサイト）の多言語チャットの見張り：未返信を読んで分けて、ntfyで知らせる（送信はまだしない）。
-# 2026-10-22。手で起動して確かめてから、10分ごとの定期にする。
+# 2026-10-22 手動で確かめ（店舗IDで入れた・未返信1件を通知）→ 10分ごとの定期に。
 
 on:
   workflow_dispatch:
@@ -12,6 +12,8 @@ on:
         default: "cg_kirakira"
   repository_dispatch:
     types: [yoasobi-chat]
+  schedule:
+    - cron: "*/10 * * * *"     # 当面は10分ごとの見回り（公開リポジトリ＝無料）。メール通知からの起動（repository_dispatch）に切り替えたら外す
 
 permissions:
   contents: write
