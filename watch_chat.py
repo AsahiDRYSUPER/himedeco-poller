@@ -454,6 +454,7 @@ def main():
                     yoasobi_record(x, "asked" if ok else "reply_failed")
                     print(f'{x["shop"]}: 外国人OKの受け付け（お礼と3つの質問）を自動送信 {"OK" if ok else "NG"}')
                     notify_one(x, auto=("yoasobi_ok", ok))
+                    x["yoasobi_listing"] = True        # 載せる仕組み（cast-mypage）をあとでまとめて起動する
             elif kind == "yoasobi_answer":
                 import shift_auto
                 cli = clis.get(x["shopdir"])
@@ -544,6 +545,16 @@ def main():
                 pass
         base.add(x["id"])
         save_seen(base)
+    # 「外国人OK」の子がいれば、夜遊びヘブンに載せる仕組み（cast-mypage の yoasobi-listing.yml）を1回だけ起動する（2026-10-22）
+    if any(x.get("yoasobi_listing") for x in fresh):
+        try:
+            # 控え（yoasobi_ok.json）を先に公開してから起動する（向こうはdataブランチの控えを読む）
+            import subprocess
+            subprocess.run(["bash", "publish_data.sh"], timeout=120)
+        except Exception as e:
+            print("控えの公開に失敗:", type(e).__name__)
+        ok, msg = cast_mypage.dispatch(workflow="yoasobi-listing.yml")
+        print(f"夜遊びヘブンに載せる仕組み（cast-mypage）を起動: {'OK' if ok else 'NG ' + msg}")
     # 個室・待機場所・迎えなどの頼みごとは、済むまでボードの「頼みごと」に残す（2026-10-01）
     reqs = []
     for x in fresh:
