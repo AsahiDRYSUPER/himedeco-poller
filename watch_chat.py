@@ -493,13 +493,17 @@ def main():
         x["yoasobi"] = yoasobi_ok(x["body"]) and x["gid"] not in NO_AUTO
         # 3つの質問への答え：店の直前の発言が質問で、相手の発言が「質問返し」でない時だけ（「指名込みですか？」を答え扱いして「受け取りました」を返してしまった 2026-10-22）
         _q = re.search(r"[？?]\s*$", x["body"]) and len(x["body"]) <= 40
-        x["yoasobi_answer"] = (not x["yoasobi"]) and x["gid"] not in NO_AUTO and not _q and (
+        # 店の直前の発言が「設定したよ／載せたよ」の報告なら、返事はお礼か感想。答え扱いしない（2026-10-22 斉藤るい「ありがとう」に「受け取りました」を返した）
+        _done = any(w in x.get("prev_shop", "") for w in ("設定したよ", "載せたよ"))
+        x["yoasobi_answer"] = (not x["yoasobi"]) and x["gid"] not in NO_AUTO and not _q and not _done and (
             YOASOBI_ASK[:14] in x.get("prev_shop", "") or YOASOBI_PROFILE_MARK in x.get("prev_shop", ""))
         # 夜遊び（外国人）の話は、定型の「確認して連絡します」を返さず人（クロード・AI）が会話の中で返す（一希さん 2026-10-22）
         # 店の直前の発言が夜遊びの話なら、その続き（「合ってます」「挨拶くらい」など）も同じ扱いにする
         _yw = ("外国人", "YOASOBI", "yoasobi", "Yoasobi", "ヨアソビ", "夜遊び")
         x["yoasobi_topic"] = any(w in x["body"] for w in _yw) or any(w in x.get("prev_shop", "") for w in _yw)
+        _rk = reply_rules.classify(x.get("raw") or x["body"], now.replace(tzinfo=None), x["shopdir"])
         x["kind"] = "urahime" if x["urahime"] else "yoasobi_ok" if x["yoasobi"] else "yoasobi_answer" if x["yoasobi_answer"] else (
+            "thanks" if (x["yoasobi_topic"] and _rk == "thanks") else
             "yoasobi_topic" if x["yoasobi_topic"] else
             "clear" if x["read"]["status"] in ("clear", "partial") else
             reply_rules.classify(x.get("raw") or x["body"], now.replace(tzinfo=None), x["shopdir"]))
