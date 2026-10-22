@@ -29,7 +29,11 @@ import requests
 from heaven_http import BASE, HeavenClient, load_credentials
 
 JST = timezone(timedelta(hours=9))
-STATE = Path("yoasobi_state.json")
+STATE = Path(os.environ.get("YOASOBI_STATE", "out/yoasobi_state.json"))
+STATE.parent.mkdir(parents=True, exist_ok=True)
+PUBLIC_RAW = "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller"
+SEND_NAME = os.environ.get("YOASOBI_SEND_NAME", "").strip()     # 1通だけ送る時：相手のスレッド名（会話リストの名前）
+SEND_TEXT = os.environ.get("YOASOBI_SEND_TEXT", "").strip()
 MNG = "https://mng.yoasobi-heaven.com"
 SHOPS = [s for s in os.environ.get("YOASOBI_SHOPS", "cg_kirakira").replace(" ", "").split(",") if s]
 LABELS = {"cg_kirakira": "キラ学", "s_matikado": "街角", "mrs_orange": "オレンジ", "potya_reen": "ぽちゃ"}
@@ -63,10 +67,17 @@ def log(*a):
 
 
 def load_state():
+    """記録を読み戻す：手元 → dataブランチ（見張りの回）→ main（cronの回）の順。"""
     try:
-        return json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {"seen": {}}
+        if STATE.exists():
+            return json.loads(STATE.read_text(encoding="utf-8"))
+        for url in (f"{PUBLIC_RAW}/data/yoasobi_state.json", f"{PUBLIC_RAW}/main/yoasobi_state.json"):
+            r = requests.get(f"{url}?t={int(time.time())}", timeout=30)
+            if r.status_code == 200:
+                return r.json()
     except Exception:
-        return {"seen": {}}
+        pass
+    return {"seen": {}}
 
 
 def save_state(st):
@@ -247,6 +258,53 @@ def read_thread(chat, row_text):
     return " / ".join(parts)[:900]
 
 
+def send_one(shopdir, name, text):
+    """会話リストの名前でスレッドを開き、1通送って、送れたかを読み直して確かめる（名前・本文はログに出さない）。"""
+    opened = open_chat(shopdir)
+    if not opened:
+        return False
+    p, b, chat = opened
+    label = LABELS.get(shopdir, shopdir)
+    try:
+        rows = chat.evaluate(ROWS_JS)
+        row = next((t for t in rows if t.split(" ")[0] == name), None)
+        if not row:
+            log(f"{label}: 送り先のスレッドが会話リストに見つかりません")
+            return False
+        chat.evaluate("""(t) => { const vis = e => !!(e.offsetWidth || e.offsetHeight); const head = t.slice(0, 40);
+            const els = Array.from(document.querySelectorAll('div, li, a')).filter(e => vis(e) && (e.innerText || '').trim().replace(/\\s+/g, ' ').startsWith(head));
+            const e = els.sort((a, b) => a.innerText.length - b.innerText.length)[0]; if (e) { e.scrollIntoView({block: 'center'}); e.click(); } }""", row)
+        chat.wait_for_timeout(3000)
+        box = chat.locator("textarea, [contenteditable=true]").last
+        if not box.count():
+            log(f"{label}: 入力欄が見つかりません")
+            return False
+        box.click()
+        box.fill(text)
+        chat.wait_for_timeout(800)
+        how = chat.evaluate("""() => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
+            const btns = Array.from(document.querySelectorAll('button, [role=button], input[type=submit]')).filter(vis);
+            let e = btns.find(b => /送信|send/i.test((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.value || '')));
+            if (!e) { const ta = document.querySelector('textarea'); const box = ta && (ta.closest('form') || ta.parentElement && ta.parentElement.parentElement);
+                      if (box) { const c = Array.from(box.querySelectorAll('button, [role=button]')).filter(vis); e = c[c.length - 1]; } }
+            if (!e) return null; e.click(); return (e.innerText || e.getAttribute('aria-label') || e.title || 'button').slice(0, 20); }""")
+        if not how:
+            box.press("Enter")
+            how = "Enter"
+        chat.wait_for_timeout(4000)
+        msgs = chat.evaluate(MSGS_JS)
+        head = re.sub(r"\s+", " ", text)[:20]
+        sent = any(head in re.sub(r"\s+", " ", m["t"]) and m["x"] > 800 for m in msgs)
+        log(f"{label}: 送信 {'OK' if sent else 'NG（画面に出ていない）'}（押したもの: {how}）")
+        try:
+            chat.click("text=会話リスト", timeout=3000)
+        except Exception:
+            pass
+        return sent
+    finally:
+        b.close(); p.stop()
+
+
 def watch_shop(shopdir, st, now):
     opened = open_chat(shopdir)
     if not opened:
@@ -301,6 +359,9 @@ def watch_shop(shopdir, st, now):
 
 def main():
     now = datetime.now(JST)
+    if SEND_NAME and SEND_TEXT:
+        ok = send_one(SHOPS[0], SEND_NAME, SEND_TEXT)
+        return 0 if ok else 1
     st = load_state()
     res = {}
     for s in SHOPS:
