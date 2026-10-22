@@ -41,8 +41,9 @@ LOOKBACK_DAYS = 3                                                    # 何日前
 
 # 分け方の言葉（お客さんの発言に含まれていたら）
 B_WORDS = ("予約", "book", "reserv", "指名", "available", "出勤", "working", "明日", "今日", "tonight", "tomorrow",
-           "割引", "discount", "cheaper", "安く", "延長", "キャンセル", "cancel", "変更", "change", "時から", ":00", ":30",
-           "来られ", "来れ", "行ける", "いける", "可以", "預約", "预约", "예약")
+           "割引", "discount", "cheaper", "安く", "値引", "負け", "まけて", "高い", "expensive", "不公平", "unfair", "deal",
+           "no way", "can't", "cannot", "できない", "無理", "延長", "キャンセル", "cancel", "変更", "change", "時から",
+           ":00", ":30", "来られ", "来れ", "行ける", "いける", "可以", "預約", "预约", "예약", "180", "分で", "min for")
 A_WORDS = ("ホテル", "hotel", "東横", "apa", "アパ", "ダイワ", "ロイネット", "提携", "エリア", "area", "倉敷", "部屋", "room",
            "フロント", "支払", "現金", "cash", "クレジット", "credit", "card", "料金", "price", "いくら", "how much", "営業",
            "何時まで", "飯店", "酒店", "호텔", "房間", "房间", "付款", "현금")
@@ -104,13 +105,13 @@ def classify(text):
 def suggest(text):
     t = (text or "").lower()
     out = []
-    if any(w in t for w in ("倉敷", "遠方", "市外", "アパート", "自宅", "apartment", "house")):
+    if any(w in t for w in ("倉敷", "遠方", "市外", "アパート", "自宅", "apartment", "my house", "my home")):
         out.append(TEMPLATES["area"])
-    if any(w in t for w in ("フロント", "扉", "door", "開け", "入れ")):
+    if any(w in t for w in ("フロント", "扉", "door", "開けて", "入室", "let you in", "let her in")):
         out.append(TEMPLATES["door"])
-    if any(w in t for w in ("料金", "price", "いくら", "how much", "cost", "fee", "expensive", "高い")):
+    if any(w in t for w in ("料金", "price", "いくら", "how much", "cost", "fee", "charge", "多少钱", "多少錢", "얼마")):
         out.append(TEMPLATES["price"])
-    if any(w in t for w in ("支払", "cash", "現金", "credit", "card", "クレジット", "pay")):
+    if any(w in t for w in ("支払", "現金", "cash", "credit card", "クレジット", "pay by", "how to pay", "payment", "支付", "付款", "결제")):
         out.append(TEMPLATES["pay"])
     if any(w in t for w in ("ホテル", "hotel", "飯店", "酒店", "호텔")) and not out:
         out.append("（ホテル名を見て）" + TEMPLATES["hotel_ok"] + "／" + TEMPLATES["hotel_ng"])
@@ -231,10 +232,19 @@ def read_thread(chat, row_text):
             break
         tail.append(text)
     tail.reverse()
-    text = " / ".join(tail)
-    # 翻訳の重複（同じ文が2回出る）を軽く間引き、画面の飾り（既読・ボット表示中など）を外す
-    text = re.sub(r"(既読|未読|•|ボット表示中|前回のログイン: [^/]+|自分に返信|返信 ピン留め)", " ", text)
-    return re.sub(r"\s+", " ", text).strip()[:600]
+    # 画面の飾り（既読・ボット表示中・ピン留め・日時）を外し、翻訳で同じ文が2回出る分を間引く
+    parts = []
+    for text in tail:
+        for seg in text.split(" / "):
+            seg = re.sub(r"(既読|未読|•|ボット表示中|前回のログイン: [^/]+|自分に返信|返信 ピン留め|\d{4}/\d{2}/\d{2} \d{2}:\d{2})", " ", seg)
+            seg = re.sub(r"\s+", " ", seg).strip()
+            if len(seg) < 2:
+                continue
+            if any(seg in q for q in parts):
+                continue
+            parts = [q for q in parts if q not in seg]
+            parts.append(seg)
+    return " / ".join(parts)[:900]
 
 
 def watch_shop(shopdir, st, now):
