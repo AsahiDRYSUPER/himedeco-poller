@@ -175,6 +175,15 @@ def handle_ai(x, cli):
             pass
         if y.get("wants_listed") and x["shopdir"] in YOASOBI_SHOPS:
             x["yoasobi_listing"] = True
+        # 3つの答えがそろったら、非公開リポジトリ cast-mypage の yoasobi-setup.yml を答えつきで起動する
+        # （掲載・★・Q&A・NG外し・本人への「設定したよ」まで、人がいなくても進む。2026-10-23）
+        if y.get("is_answer") and y.get("complete") and x["shopdir"] in YOASOBI_SHOPS and sent:
+            inputs = {"shop": x["shopdir"], "gid": str(x["gid"]), "name": ai_reply.yobi(x["name"]),
+                      "en": str(y.get("lang_en") or "0"), "zh": str(y.get("lang_zh") or "0"), "kr": str(y.get("lang_kr") or "0"),
+                      "ng": "・".join(str(w) for w in (y.get("ng") or []))[:200], "photo": str(y.get("photo") or "unknown")}
+            ok, msg = cast_mypage.dispatch(workflow="yoasobi-setup.yml", inputs=inputs)
+            print(f'{x["shop"]}: 夜遊びの設定を起動 {"OK" if ok else "✗ " + msg}')
+            x["yoasobi_setup"] = ok
     try:
         ai_reply.save_learned(data.get("learned"), x["name"])
     except Exception:
