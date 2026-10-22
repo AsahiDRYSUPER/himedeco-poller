@@ -429,7 +429,7 @@ def main():
         try:
             res[s] = watch_shop(s, st, now)
         except Exception as e:
-            log(f"{LABELS.get(s, s)}: 失敗 {type(e).__name__}")
+            log(f"{LABELS.get(s, s)}: 失敗 {type(e).__name__} {str(e)[:160]}")
             res[s] = {"ok": False}
     save_state(st)
     return 0 if all(v.get("ok") for v in res.values()) else 1
