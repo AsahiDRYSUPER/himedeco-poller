@@ -56,6 +56,11 @@ import reply_rules
 import requests_log
 import booth
 import shift_apply
+import ai_reply
+
+# Claude（AI）に返させる連絡の種類と、最後の発言からの待ち時間（続けて送ってくる途中で返さない）
+AI_KINDS = ("question", "other", "yoasobi_topic", "yoasobi_answer")
+AI_WAIT_MIN = 3
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
@@ -147,6 +152,35 @@ def yoasobi_reply(cli, shopdir, gid, text):
     except Exception as e:
         print("  送信で例外:", type(e).__name__)
         return False
+
+
+def handle_ai(x, cli):
+    """Claude に返事を考えさせて、送ってよい形なら送る。結果は通知へ（名前・本文はログに出さない）。"""
+    from heaven_http import COMMU_IDS as _C
+    hist = ai_reply.history_text(cli, BASE, x["gid"], _C[x["shopdir"]]) if cli is not None else ""
+    data, why = ai_reply.ask(x["shop"], x["shopdir"], ai_reply.yobi(x["name"]), hist, x.get("raw") or x["body"])
+    if data is None:
+        print(f'{x["shop"]}: AIの返事を作れず（{why}）→ 人へ')
+        notify_one(x, auto=("ai_fail", why))
+        return
+    send, why2 = ai_reply.check(data)
+    sent = False
+    if send and cli is not None:
+        sent = yoasobi_reply(cli, x["shopdir"], x["gid"], data["reply"].strip())
+    y = data.get("yoasobi") or {}
+    if y.get("is_answer") or y.get("wants_listed"):
+        try:
+            yoasobi_record(x, "answered" if y.get("is_answer") else "asked")
+        except Exception:
+            pass
+        if y.get("wants_listed") and x["shopdir"] in YOASOBI_SHOPS:
+            x["yoasobi_listing"] = True
+    try:
+        ai_reply.save_learned(data.get("learned"), x["name"])
+    except Exception:
+        pass
+    print(f'{x["shop"]}: AIの判断 {data.get("action")} / 送信 {"OK" if sent else ("なし（" + why2 + "）" if not send else "NG")}')
+    notify_one(x, auto=("ai", (data, send, sent)))
 
 
 def yoasobi_load():
@@ -362,6 +396,25 @@ def notify_one(x, result=None, urahime=None, auto=None):
             body += ("\n\n🌏 外国人OKの申し出。お礼と3つの質問（写真・話せる言葉・NGのプレイ）を自動で返しました。答えが来たらまた通知します") if ok else \
                     "\n\n！ 外国人OKの申し出ですが、自動の返事が送れませんでした。手で返してください"
             extra = {"Tags": "earth_asia", "Priority": "high"} if ok else {"Tags": "warning", "Priority": "high"}
+        elif what == "ai":
+            data, send, sent = ok
+            reply_text = (data.get("reply") or "").strip()
+            if send:
+                body += ("\n\n🤖 AIが返しました：「" + reply_text[:220] + "」") if sent else \
+                        ("\n\n！ AIの返事を送れませんでした。手で返してください：「" + reply_text[:220] + "」")
+            else:
+                body += f"\n\n🤖 AIの判断：{data.get('action')}（女の子には送っていません）"
+            if (data.get("owner_note") or "").strip():
+                body += "\n📝 " + data["owner_note"].strip()[:220]
+            y = data.get("yoasobi") or {}
+            if y.get("is_answer"):
+                body += (f"\n🌏 答え：英★{y.get('lang_en')} 中★{y.get('lang_zh')} 韓★{y.get('lang_kr')}"
+                         f" / NG {'・'.join(y.get('ng') or []) or 'なし'} / 写真 {y.get('photo')}")
+            loud = data.get("action") in ("reply_and_notify", "notify_only") or (send and not sent)
+            extra = {"Tags": "robot", "Priority": "high" if loud else "default"}
+        elif what == "ai_fail":
+            body += f"\n\n！ AIで返せませんでした（{ok}）。手で返してください"
+            extra = {"Tags": "warning", "Priority": "high"}
         elif what == "yoasobi_topic":
             body += "\n\n🌏 外国人（YOASOBI）の話。定型は返していません。クロードが会話の中で聞き返して返します"
             extra = {"Tags": "earth_asia", "Priority": "high"}
@@ -457,6 +510,10 @@ def main():
         x["apply"] = bool(shift_apply.APPLY_RE.search(x["body"])) and x["read"]["status"] not in ("clear", "partial")
         if x["apply"] and x["kind"] in ("ask_when", "tentative", "decline", "later"):
             x["kind"] = "other"
+        # Claude（AI）で返す：鍵がある時だけ。質問・その他・YOASOBIの話・3つの答え。
+        # 個室・迎えなどの頼みごとと、返し方を一希さんが決める子は今まで通り人へ（2026-10-22）
+        if ai_reply.enabled() and x["kind"] in AI_KINDS and not x["logistics"] and x["gid"] not in NO_AUTO:
+            x["kind"] = "ai"
     n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
     n_ura = sum(1 for x in fresh if x["urahime"])
     print(f"新しい連絡 {len(fresh)}件（うち出勤の返事で条件なし {n_clear}件、裏姫デコの依頼 {n_ura}件）→ "
@@ -484,6 +541,12 @@ def main():
                 notify_one(x, auto=("hold", False))
             elif kind == "urahime":
                 notify_one(x, urahime=urahime)
+            elif kind == "ai":
+                age = now - (when({"create_date": x["at"]}) or now)
+                if age < timedelta(minutes=AI_WAIT_MIN):
+                    deferred.add(x["id"])          # 続けて送ってくる途中かもしれないので次の回に回す
+                    continue
+                handle_ai(x, clis.get(x["shopdir"]))
             elif kind == "yoasobi_ok":
                 import shift_auto
                 cli = clis.get(x["shopdir"])
