@@ -55,6 +55,10 @@ jobs:
           YOASOBI_STATE: yoasobi_state.json
           YOASOBI_SEND_NAME: ${{ inputs.send_name || '' }}
           YOASOBI_SEND_TEXT: ${{ inputs.send_text || '' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AI_REPLY: ${{ vars.AI_REPLY }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          AI_EFFORT: ${{ vars.AI_EFFORT }}
         run: python3 yoasobi_watch.py || true
       - name: 記録を保存
         if: always()
