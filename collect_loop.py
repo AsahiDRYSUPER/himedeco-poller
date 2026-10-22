@@ -1,5 +1,6 @@
 """collect_shops.py を5分おきに繰り返し、そのたびに公開データ(dataブランチ)へ反映する。
 GitHubの定期実行は数十分遅れることがあるため、1回の実行の中で何度も回して、5分ごとの更新を保つ。"""
+import json
 import os
 import subprocess
 import sys
@@ -7,6 +8,55 @@ import time
 
 LOOP_MIN = int(os.environ.get("LOOP_MINUTES", "0") or 0)
 INTERVAL = 300
+
+# 夜遊びヘブンの「来た時だけ」（2026-10-23 一希さん「夜遊びは来た時だけ」）
+# 夜遊びの管理画面の通知メールを ntfy の受け口（メールで投稿できる宛先 ntfy-<topic>@ntfy.sh）へ送ってもらい、
+# 5分の待ち時間のあいだ、その受け口を聞いている。メールが届いた瞬間に yoasobi_watch.py を回す。
+# 受け口の名前は YOASOBI_MAIL_TOPIC、無ければ「いつもの通知先 + -mail」。名前はログに出さない。
+MAIL_TOPIC = (os.environ.get("YOASOBI_MAIL_TOPIC") or "").strip() or (
+    (os.environ.get("NTFY_TOPIC") or "").strip() + "-mail" if (os.environ.get("NTFY_TOPIC") or "").strip() else "")
+NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
+# 念のための見回りの間隔（何回に1回か）。既定は今まで通り 2回に1回＝10分ごと。受け口にメールが届くのを確かめたら、
+# リポジトリの変数 YOASOBI_SWEEP_CYCLES=12（約1時間ごと）にする
+SWEEP = int(os.environ.get("YOASOBI_SWEEP_CYCLES", "") or 2)
+_mail_since = int(time.time())
+
+
+def wait_mail(seconds):
+    """受け口を seconds 秒まで聞く。メールが来たら True。来なければ時間切れで False（その間は眠るのと同じ）。"""
+    global _mail_since
+    seconds = int(seconds)
+    if not MAIL_TOPIC or seconds <= 3:
+        time.sleep(max(0, seconds))
+        return False
+    import requests
+    try:
+        r = requests.get(f"{NTFY_HOST}/{MAIL_TOPIC}/json", params={"since": _mail_since}, stream=True, timeout=(15, seconds))
+        for line in r.iter_lines():
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            if d.get("event") == "message":
+                _mail_since = int(d.get("time") or time.time())
+                r.close()
+                return True
+    except requests.exceptions.ReadTimeout:
+        _mail_since = int(time.time()) - 5
+    except Exception as e:
+        print("夜遊びの受け口の待ち受けで失敗:", type(e).__name__)
+        time.sleep(min(60, seconds))
+    return False
+
+
+def yoasobi_watch(reason):
+    try:
+        print("夜遊びの見張り:", reason)
+        subprocess.run([sys.executable, "yoasobi_watch.py"], timeout=600)
+    except Exception as _e:
+        print("夜遊びの見張りで失敗:", type(_e).__name__)
 
 
 def publish():
@@ -28,12 +78,9 @@ while True:
     # 姫デコチャットの見張り(新しい連絡があればスマホへ通知)。ここで失敗しても、ボードのデータ更新は止めない
     try:
         subprocess.run([sys.executable, "watch_chat.py"], timeout=900)   # 出勤を上げる時はブラウザ操作で数分かかる
-        # 夜遊びヘブンの多言語チャットの見張り（2回に1回＝10分ごと。cronが当てにならない時の本線。2026-10-22）
-        if os.environ.get("YOASOBI_IN_LOOP", "on").lower() not in ("off", "0", "false") and (_cycle % 2 == 0):
-            try:
-                subprocess.run([sys.executable, "yoasobi_watch.py"], timeout=600)
-            except Exception as _e:
-                print("夜遊びの見張りで失敗:", type(_e).__name__)
+        # 夜遊びヘブンの多言語チャットの念のための見回り（受け口がある時は約1時間ごと、無い時は10分ごと。2026-10-23）
+        if os.environ.get("YOASOBI_IN_LOOP", "on").lower() not in ("off", "0", "false") and (_cycle % SWEEP == 0):
+            yoasobi_watch("見回り")
     except Exception as e:
         print("姫デコチャットの見張りに失敗:", type(e).__name__)
     # 即ヒメの「待機中なのに本当は接客中」を直す（毎回＝約5分おき。一希さん 10/10。失敗してもボードの更新は止めない）
@@ -56,4 +103,10 @@ while True:
             publish()
     if time.time() + INTERVAL > end:
         break
-    time.sleep(max(5, INTERVAL - (time.time() - t0)))
+    # 次の回までの待ち時間は、夜遊びの受け口を聞きながら待つ（メールが来たらすぐ見に行き、残りをまた待つ）
+    while True:
+        remain = INTERVAL - (time.time() - t0)
+        if remain <= 5:
+            break
+        if wait_mail(remain) and os.environ.get("YOASOBI_IN_LOOP", "on").lower() not in ("off", "0", "false"):
+            yoasobi_watch("メールの合図")
