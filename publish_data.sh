@@ -7,6 +7,8 @@ for f in shops.json next_shifts.json; do cp out/$f /tmp/pub/ 2>/dev/null || curl
 cp out/todo.enc.json /tmp/pub/ 2>/dev/null || true
 cp out/requests.enc.json /tmp/pub/ 2>/dev/null || true   # 頼みごと(個室・待機場所・迎え)。名前を含むので暗号化済み
 cp out/chat_seen.json /tmp/pub/ 2>/dev/null || true
+# 外国人OKの申し出の控え（キャストID・店・時刻・状態だけ）。今回書けていなければ前のものを引き継ぐ
+cp out/yoasobi_ok.json /tmp/pub/ 2>/dev/null || curl -fsS "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/data/yoasobi_ok.json" -o /tmp/pub/yoasobi_ok.json 2>/dev/null || true
 # 即ヒメに時間を付けた記録(名前を含むので暗号化済み)。今回書けていなければ前のものを引き継ぐ
 cp out/sokuhime.enc.json /tmp/pub/ 2>/dev/null || curl -fsS "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/data/sokuhime.enc.json" -o /tmp/pub/sokuhime.enc.json 2>/dev/null || true
 # 即ヒメの「生きている印」（名前なし。最終確認の時刻と件数）
