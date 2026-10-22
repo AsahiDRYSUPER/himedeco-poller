@@ -31,14 +31,14 @@ def fake_client(payload, stop="end_turn"):
 
 import ai_reply  # noqa: E402
 
-ANS = {"action": "reply", "reply": "まりさん、ありがとう！英語は挨拶程度・NGなし・写真はヘブンと同じ、で設定しておくね。終わったら連絡するね。",
+ANS = {"action": "reply", "reply": "試験さん、ありがとう！英語は挨拶程度・NGなし・写真はヘブンと同じ、で設定しておくね。終わったら連絡するね。",
        "owner_note": "", "learned": "",
        "yoasobi": {"is_answer": True, "wants_listed": False, "lang_en": "1", "lang_zh": "0", "lang_kr": "0", "ng": [], "photo": "same"}}
 
 ok = True
 
 anthropic.Anthropic = fake_client(ANS)
-data, why = ai_reply.ask("キラキラ学園", "cg_kirakira", "まりさん", "[10/22 19:00 店] 3つだけ教えてください", "①英語なら挨拶程度 ②なし ③同じで大丈夫")
+data, why = ai_reply.ask("キラキラ学園", "cg_kirakira", "試験さん", "[10/22 19:00 店] 3つだけ教えてください", "①英語なら挨拶程度 ②なし ③同じで大丈夫")
 ok &= (why == "ok" and data["action"] == "reply")
 kw = CALLS[-1]
 ok &= kw["model"] == "claude-opus-5-5"
@@ -55,12 +55,12 @@ ok &= ai_reply.check(dict(ANS, action="no_reply"))[0] is False
 print("check:", send, w)
 
 anthropic.Anthropic = fake_client(ANS, stop="refusal")
-d2, why2 = ai_reply.ask("キラキラ学園", "cg_kirakira", "まりさん", "", "テスト")
+d2, why2 = ai_reply.ask("キラキラ学園", "cg_kirakira", "試験さん", "", "テスト")
 ok &= d2 is None and why2 == "断られた"
 print("refusal:", why2)
 
-ai_reply.save_learned("YOASOBIの単価を聞かれたら、外国人向けコースの料金と取り分を両方答える", "まりさん")
-ai_reply.save_learned("まりさんは挨拶程度", "まりさん")      # 名前入りは残さない
+ai_reply.save_learned("YOASOBIの単価を聞かれたら、外国人向けコースの料金と取り分を両方答える", "試験さん")
+ai_reply.save_learned("試験さんは挨拶程度", "試験さん")      # 名前入りは残さない
 items = ai_reply.load_learned()
 ok &= len(items) == 1
 print("learned:", len(items))
@@ -74,7 +74,7 @@ watch_chat.post_ntfy = lambda title, body, extra=None: notes.append(body)
 watch_chat.yoasobi_record = lambda x, s: None
 ai_reply.history_text = lambda *a, **k: "[10/22 19:00 店] 3つだけ教えてください"
 anthropic.Anthropic = fake_client(ANS)
-x = {"shop": "キラキラ学園", "shopdir": "cg_kirakira", "gid": 66528238, "name": "小森まり【新入生】", "body": "①英語なら挨拶程度 ②なし ③同じで大丈夫",
+x = {"shop": "キラキラ学園", "shopdir": "cg_kirakira", "gid": 99999999, "name": "試験まり【新入生】", "body": "①英語なら挨拶程度 ②なし ③同じで大丈夫",
      "raw": "①英語なら挨拶程度 ②なし ③同じで大丈夫", "at": "2026/10/22 18:56:00", "read": {"status": "none", "hint": ""}}
 watch_chat.handle_ai(x, object())
 ok &= len(sent_texts) == 1 and "設定しておくね" in sent_texts[0]
