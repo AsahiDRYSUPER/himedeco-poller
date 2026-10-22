@@ -27,7 +27,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests beautifulsoup4 cryptography playwright
+      - run: pip install requests beautifulsoup4 cryptography playwright anthropic
       - name: ブラウザを用意する（出勤の返事をそのまま上げる時に使う）
         run: python3 -m playwright install --with-deps chromium
       - name: 出勤の返事の読み方が壊れていないか
@@ -48,6 +48,11 @@ jobs:
           CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
           SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
           SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AI_REPLY: ${{ vars.AI_REPLY }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          AI_EFFORT: ${{ vars.AI_EFFORT }}
+          AI_PRIVATE_NOTES: ${{ vars.AI_PRIVATE_NOTES }}
           GH_TOKEN: ${{ github.token }}
           LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '55' || '0' }}
         run: python3 collect_loop.py
