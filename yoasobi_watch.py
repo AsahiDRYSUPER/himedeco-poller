@@ -26,6 +26,8 @@ from pathlib import Path
 
 import requests
 
+import ai_reply      # お客さんへの返事を Claude で考える（2026-10-23）
+
 from heaven_http import BASE, HeavenClient, load_credentials
 
 JST = timezone(timedelta(hours=9))
@@ -132,6 +134,7 @@ def suggest(text):
 def open_chat(shopdir):
     """店舗IDでHTTPログイン → クッキーをブラウザに渡す → 夜遊びの管理画面 → チャット管理画面。(playwright, browser, chat_page) を返す。"""
     from playwright.sync_api import sync_playwright
+
     account, password, direct = load_credentials(shopdir)
     cli = HeavenClient(account, password, direct=direct)
     cli.login_and_select(shopdir)
@@ -225,7 +228,7 @@ def read_thread(chat, row_text):
         const e = els.sort((a, b) => a.innerText.length - b.innerText.length)[0];
         if (!e) return false; e.scrollIntoView({block: 'center'}); e.click(); return true; }""", row_text)
     if not hit:
-        return ""
+        return "", ""
     chat.wait_for_timeout(3000)
     msgs = chat.evaluate(MSGS_JS)
     items, cur = [], []
@@ -255,7 +258,38 @@ def read_thread(chat, row_text):
                 continue
             parts = [q for q in parts if q not in seg]
             parts.append(seg)
-    return " / ".join(parts)[:900]
+    # 直近のやりとり（AIに渡す文脈。古い順に8件まで。画面の飾りは外す）
+    hist = []
+    for side, text in items[-8:]:
+        t = re.sub(r"(既読|未読|•|ボット表示中|前回のログイン: [^/]+|自分に返信|返信 ピン留め|\d{4}/\d{2}/\d{2} \d{2}:\d{2})", " ", text)
+        t = re.sub(r"\s+", " ", t).strip()
+        if t:
+            hist.append(f"[{side}] {t[:300]}")
+    return " / ".join(parts)[:900], "\n".join(hist)
+
+
+def send_in_thread(chat, text):
+    """いま開いているスレッドに1通送り、画面に出たかで確かめる。返す: (送れたか, 押したもの)"""
+    box = chat.locator("textarea, [contenteditable=true]").last
+    if not box.count():
+        return False, "入力欄なし"
+    box.click()
+    box.fill(text)
+    chat.wait_for_timeout(800)
+    how = chat.evaluate("""() => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
+        const btns = Array.from(document.querySelectorAll('button, [role=button], input[type=submit]')).filter(vis);
+        let e = btns.find(b => /送信|send/i.test((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.value || '')));
+        if (!e) { const ta = document.querySelector('textarea'); const box = ta && (ta.closest('form') || ta.parentElement && ta.parentElement.parentElement);
+                  if (box) { const c = Array.from(box.querySelectorAll('button, [role=button]')).filter(vis); e = c[c.length - 1]; } }
+        if (!e) return null; e.click(); return (e.innerText || e.getAttribute('aria-label') || e.title || 'button').slice(0, 20); }""")
+    if not how:
+        box.press("Enter")
+        how = "Enter"
+    chat.wait_for_timeout(4000)
+    msgs = chat.evaluate(MSGS_JS)
+    head = re.sub(r"\s+", " ", text)[:20]
+    sent = any(head in re.sub(r"\s+", " ", m["t"]) and m["x"] > 800 for m in msgs)
+    return sent, how
 
 
 def send_one(shopdir, name, text):
@@ -322,23 +356,50 @@ def watch_shop(shopdir, st, now):
             last = st["seen"].get(k)
             if last and datetime.fromisoformat(last) > now - timedelta(minutes=RENOTIFY_MIN):
                 continue
-            text = ""
+            text, hist = "", ""
             try:
-                text = read_thread(chat, r["row"])
+                text, hist = read_thread(chat, r["row"])
             except Exception as e:
                 log(f"{label}: スレッドを読めませんでした {type(e).__name__}")
-            cat = classify(text or r["preview"])
+            latest = text or r["preview"]
             age = int((now - r["at"]).total_seconds() // 60)
-            body = f"{r['name']}（{age}分前）\n{(text or r['preview'])[:400]}"
-            if cat == "A":
-                tips = suggest(text or r["preview"])
-                body += "\n\n→ 定型で返せそう：\n" + ("\n".join("・" + x for x in tips) if tips else "・（ホテル・エリア・料金・支払いの定型）")
-                body += "\n（自動送信はまだOFF。チャット管理画面から送ってください）"
-            elif cat == "B":
-                body += "\n\n→ 判断が要る（予約・指名・日時・変更・値引き）。受付が返す。値引き・乗り換えは卍へ"
+            body = f"{r['name']}（{age}分前）\n{latest[:400]}"
+            # まず Claude に聞く（決まり＝yoasobi_knowledge.md）。A で決まりの中なら、AUTO_YOASOBI=on の時だけそのまま送る。
+            # それ以外は下書きを付けて知らせる。Claude が使えない時は今まで通りの仕分けだけ（2026-10-23）
+            data, why = (ai_reply.ask_customer(label, r["name"], hist, latest) if ai_reply.enabled() else (None, "off"))
+            sent, title = False, ""
+            if data:
+                cat = data.get("category") or "C"
+                can, w2 = ai_reply.check_customer(data)
+                reply = (data.get("reply") or "").strip()
+                if can and AUTO:
+                    try:
+                        sent, how = send_in_thread(chat, reply)
+                    except Exception as e:
+                        sent, how = False, type(e).__name__
+                    log(f"{label}: AIの返事を送信 {'OK' if sent else 'NG'}（{how}）")
+                if sent:
+                    title, body = f"🤖 夜遊び {label} AIが返しました {cat}", body + f"\n\n→ 送った返事：\n{reply}"
+                elif data.get("action") == "none" and not reply:
+                    title, body = f"🌏 夜遊び {label} 返事は不要 {cat}", body + f"\n\n→ {data.get('reason') or ''}"
+                else:
+                    title = f"🌏 夜遊び {label} 未返信 {cat}（AIの下書きあり）"
+                    body += f"\n\n→ AIの下書き（{'定型・AUTO_YOASOBIがoffなので送っていない' if can else 'お店の判断が要るので送っていない'}）：\n{reply or '（無し）'}"
+                if data.get("owner_note"):
+                    body += f"\n📝 {data['owner_note']}"
             else:
-                body += "\n\n→ 読み切れない。中身を見て返してください"
-            ok = post_ntfy(f"🌏 夜遊び {label} 未返信 {cat}", body, priority="urgent" if age >= 5 else "high")
+                cat = classify(latest)
+                if why not in ("off",):
+                    body += f"\n（AIが使えない：{why}）"
+                if cat == "A":
+                    tips = suggest(latest)
+                    body += "\n\n→ 定型で返せそう：\n" + ("\n".join("・" + x for x in tips) if tips else "・（ホテル・エリア・料金・支払いの定型）")
+                elif cat == "B":
+                    body += "\n\n→ 判断が要る（予約・指名・日時・変更・値引き）。受付が返す。値引き・乗り換えは卍へ"
+                else:
+                    body += "\n\n→ 読み切れない。中身を見て返してください"
+                title = f"🌏 夜遊び {label} 未返信 {cat}"
+            ok = post_ntfy(title, body, priority=("default" if sent else ("urgent" if age >= 5 else "high")))
             if ok:
                 st["seen"][k] = now.isoformat()
                 n_notified[cat] += 1
