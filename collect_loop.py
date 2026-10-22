@@ -21,6 +21,12 @@ while True:
     # 姫デコチャットの見張り(新しい連絡があればスマホへ通知)。ここで失敗しても、ボードのデータ更新は止めない
     try:
         subprocess.run([sys.executable, "watch_chat.py"], timeout=900)   # 出勤を上げる時はブラウザ操作で数分かかる
+        # 夜遊びヘブンの多言語チャットの見張り（2回に1回＝10分ごと。cronが当てにならない時の本線。2026-10-22）
+        if os.environ.get("YOASOBI_IN_LOOP", "on").lower() not in ("off", "0", "false") and (_cycle % 2 == 0):
+            try:
+                subprocess.run([sys.executable, "yoasobi_watch.py"], timeout=600)
+            except Exception as _e:
+                print("夜遊びの見張りで失敗:", type(_e).__name__)
     except Exception as e:
         print("姫デコチャットの見張りに失敗:", type(e).__name__)
     # 即ヒメの「待機中なのに本当は接客中」を直す（毎回＝約5分おき。一希さん 10/10。失敗してもボードの更新は止めない）
