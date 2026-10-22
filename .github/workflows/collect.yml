@@ -28,14 +28,11 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install requests beautifulsoup4 cryptography playwright "anthropic==0.125.0"
-      - name: ブラウザを用意する（出勤の返事をそのまま上げる時に使う。固まる日があるので6分で打ち切ってやり直す 2026-10-23）
-        id: pw
-        continue-on-error: true
-        timeout-minutes: 6
-        run: python3 -m playwright install --with-deps chromium
-      - if: steps.pw.outcome == 'failure'
-        timeout-minutes: 8
-        run: python3 -m playwright install --with-deps chromium
+      - name: ブラウザを用意する（apt のロックが空くのを待ってから入れる。2026-10-23 ロック待ちで固まる・失敗する回があった）
+        timeout-minutes: 12
+        run: |
+          for i in $(seq 1 100); do sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock >/dev/null 2>&1 || break; sleep 5; done
+          python3 -m playwright install --with-deps chromium || python3 -m playwright install chromium
       - name: 出勤の返事の読み方が壊れていないか
         run: python3 test_shift_reply.py && python3 test_reply_rules.py && python3 test_shift_apply.py && python3 test_sokuhime_fix.py && python3 test_si9_sort.py
       - name: Collect
