@@ -10,6 +10,14 @@ on:
         description: "見る店（shopdirをカンマ区切り。既定は cg_kirakira）"
         type: string
         default: "cg_kirakira"
+      send_name:
+        description: "1通だけ送る時：相手のスレッド名（会話リストの名前）。空なら見張りだけ"
+        type: string
+        default: ""
+      send_text:
+        description: "1通だけ送る時：本文（日本語。夜遊び側が翻訳）"
+        type: string
+        default: ""
   repository_dispatch:
     types: [yoasobi-chat]
   # 定期は collect.yml の見張りの中（collect_loop.py、2回に1回＝10分ごと）で回す。ここは手動と repository_dispatch だけ（cronは当てにならないので外した。2026-10-22）
@@ -38,6 +46,9 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           YOASOBI_SHOPS: ${{ inputs.shops || 'cg_kirakira' }}
           AUTO_YOASOBI: ${{ vars.AUTO_YOASOBI || 'off' }}
+          YOASOBI_STATE: yoasobi_state.json
+          YOASOBI_SEND_NAME: ${{ inputs.send_name || '' }}
+          YOASOBI_SEND_TEXT: ${{ inputs.send_text || '' }}
         run: python3 yoasobi_watch.py || true
       - name: 記録を保存
         if: always()
