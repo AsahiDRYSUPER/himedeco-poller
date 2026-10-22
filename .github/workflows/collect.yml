@@ -37,6 +37,7 @@ jobs:
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          YOASOBI_SWEEP_CYCLES: ${{ vars.YOASOBI_SWEEP_CYCLES }}   # 夜遊びの見回りの間隔（受け口が動いたら 12）
           SHIFT_AUTO: ${{ vars.SHIFT_AUTO }}
           AUTO_REPLY: ${{ vars.AUTO_REPLY }}
           NO_AUTO_IDS: ${{ secrets.NO_AUTO_IDS }}
