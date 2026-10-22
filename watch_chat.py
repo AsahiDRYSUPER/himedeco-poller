@@ -491,10 +491,14 @@ def main():
     for x in fresh:
         x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS) and x["gid"] not in NO_AUTO
         x["yoasobi"] = yoasobi_ok(x["body"]) and x["gid"] not in NO_AUTO
-        x["yoasobi_answer"] = (not x["yoasobi"]) and x["gid"] not in NO_AUTO and (
+        # 3つの質問への答え：店の直前の発言が質問で、相手の発言が「質問返し」でない時だけ（「指名込みですか？」を答え扱いして「受け取りました」を返してしまった 2026-10-22）
+        _q = re.search(r"[？?]\s*$", x["body"]) and len(x["body"]) <= 40
+        x["yoasobi_answer"] = (not x["yoasobi"]) and x["gid"] not in NO_AUTO and not _q and (
             YOASOBI_ASK[:14] in x.get("prev_shop", "") or YOASOBI_PROFILE_MARK in x.get("prev_shop", ""))
-        # 夜遊び（外国人）の話は、定型の「確認して連絡します」を返さず人（クロード）が会話の中で聞き返す（一希さん 2026-10-22）
-        x["yoasobi_topic"] = any(w in x["body"] for w in ("外国人", "YOASOBI", "yoasobi", "Yoasobi", "ヨアソビ", "夜遊び"))
+        # 夜遊び（外国人）の話は、定型の「確認して連絡します」を返さず人（クロード・AI）が会話の中で返す（一希さん 2026-10-22）
+        # 店の直前の発言が夜遊びの話なら、その続き（「合ってます」「挨拶くらい」など）も同じ扱いにする
+        _yw = ("外国人", "YOASOBI", "yoasobi", "Yoasobi", "ヨアソビ", "夜遊び")
+        x["yoasobi_topic"] = any(w in x["body"] for w in _yw) or any(w in x.get("prev_shop", "") for w in _yw)
         x["kind"] = "urahime" if x["urahime"] else "yoasobi_ok" if x["yoasobi"] else "yoasobi_answer" if x["yoasobi_answer"] else (
             "yoasobi_topic" if x["yoasobi_topic"] else
             "clear" if x["read"]["status"] in ("clear", "partial") else
