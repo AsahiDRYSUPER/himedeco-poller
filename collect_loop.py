@@ -19,7 +19,8 @@ NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
 # 念のための見回りの間隔（何回に1回か）。既定は今まで通り 2回に1回＝10分ごと。受け口にメールが届くのを確かめたら、
 # リポジトリの変数 YOASOBI_SWEEP_CYCLES=12（約1時間ごと）にする
 SWEEP = int(os.environ.get("YOASOBI_SWEEP_CYCLES", "") or 2)
-_mail_since = int(time.time())
+_mail_since = int(time.time())      # 最初は今の時刻、以後はメッセージID
+_mail_seen = set()
 
 
 def wait_mail(seconds):
@@ -30,7 +31,9 @@ def wait_mail(seconds):
         time.sleep(max(0, seconds))
         return False
     import requests
+    t0 = time.time()
     try:
+        # since は「最後に受け取ったメッセージのID」（時刻だと同じメッセージが何度も返る。2026-10-23 1時間空回りした）
         r = requests.get(f"{NTFY_HOST}/{MAIL_TOPIC}/json", params={"since": _mail_since}, stream=True, timeout=(15, seconds))
         for line in r.iter_lines():
             if not line:
@@ -39,12 +42,18 @@ def wait_mail(seconds):
                 d = json.loads(line)
             except Exception:
                 continue
-            if d.get("event") == "message":
-                _mail_since = int(d.get("time") or time.time())
+            if d.get("event") == "message" and d.get("id"):
+                if d["id"] in _mail_seen:          # since=ID は同じメッセージも返すことがあるので、見たIDは飛ばす
+                    continue
+                _mail_seen.add(d["id"])
+                _mail_since = d["id"]
                 r.close()
                 return True
-    except requests.exceptions.ReadTimeout:
-        _mail_since = int(time.time()) - 5
+    except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
+        # 待ち時間いっぱいで切れたのは正常（流しながら読む時は ConnectionError の形で来る）
+        if "timed out" not in str(e).lower() and time.time() - t0 < seconds - 5:
+            print("夜遊びの受け口の待ち受けで失敗:", type(e).__name__)
+            time.sleep(min(60, max(1, seconds - (time.time() - t0))))
     except Exception as e:
         print("夜遊びの受け口の待ち受けで失敗:", type(e).__name__)
         time.sleep(min(60, seconds))
