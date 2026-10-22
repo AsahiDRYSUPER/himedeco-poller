@@ -19,7 +19,12 @@ _cycle = 0
 while True:
     t0 = time.time()
     _cycle += 1
-    r = subprocess.run([sys.executable, "collect_shops.py"])
+    # ヘブンが重い日に返事待ちで固まらないよう、ここにも時間の上限（2026-10-22 18:37 の回が2時間以上止まり、見張り全体が止まった）
+    try:
+        r = subprocess.run([sys.executable, "collect_shops.py"], timeout=900)
+    except subprocess.TimeoutExpired:
+        print("ボードの集計が15分で終わらず打ち切り")
+        r = subprocess.CompletedProcess(args=[], returncode=1)
     # 姫デコチャットの見張り(新しい連絡があればスマホへ通知)。ここで失敗しても、ボードのデータ更新は止めない
     try:
         subprocess.run([sys.executable, "watch_chat.py"], timeout=900)   # 出勤を上げる時はブラウザ操作で数分かかる
