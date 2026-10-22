@@ -33,7 +33,7 @@ import ai_reply  # noqa: E402
 
 ANS = {"action": "reply", "reply": "試験さん、ありがとう！英語は挨拶程度・NGなし・写真はヘブンと同じ、で設定しておくね。終わったら連絡するね。",
        "owner_note": "", "learned": "",
-       "yoasobi": {"is_answer": True, "wants_listed": False, "lang_en": "1", "lang_zh": "0", "lang_kr": "0", "ng": [], "photo": "same"}}
+       "yoasobi": {"is_answer": True, "complete": True, "wants_listed": False, "lang_en": "1", "lang_zh": "0", "lang_kr": "0", "ng": [], "photo": "same"}}
 
 ok = True
 
@@ -59,6 +59,7 @@ d2, why2 = ai_reply.ask("キラキラ学園", "cg_kirakira", "試験さん", "",
 ok &= d2 is None and why2 == "断られた"
 print("refusal:", why2)
 
+open("out_test/ai_learned.json","w").write('{"items": []}')   # 本番の学んだこと（dataブランチ）を読みに行かないよう、空の控えを置く
 ai_reply.save_learned("YOASOBIの単価を聞かれたら、外国人向けコースの料金と取り分を両方答える", "試験さん")
 ai_reply.save_learned("試験さんは挨拶程度", "試験さん")      # 名前入りは残さない
 items = ai_reply.load_learned()
@@ -72,6 +73,8 @@ sent_texts, notes = [], []
 watch_chat.yoasobi_reply = lambda cli, shop, gid, text: (sent_texts.append(text) or True)
 watch_chat.post_ntfy = lambda title, body, extra=None: notes.append(body)
 watch_chat.yoasobi_record = lambda x, s: None
+DISPATCH = []
+watch_chat.cast_mypage.dispatch = lambda workflow="", ref="main", inputs=None: (DISPATCH.append((workflow, inputs)) or (True, "起動"))
 ai_reply.history_text = lambda *a, **k: "[10/22 19:00 店] 3つだけ教えてください"
 anthropic.Anthropic = fake_client(ANS)
 x = {"shop": "キラキラ学園", "shopdir": "cg_kirakira", "gid": 99999999, "name": "試験まり【新入生】", "body": "①英語なら挨拶程度 ②なし ③同じで大丈夫",
@@ -79,6 +82,8 @@ x = {"shop": "キラキラ学園", "shopdir": "cg_kirakira", "gid": 99999999, "n
 watch_chat.handle_ai(x, object())
 ok &= len(sent_texts) == 1 and "設定しておくね" in sent_texts[0]
 ok &= any("AIが返しました" in n for n in notes) and any("英★1" in n for n in notes)
+ok &= len(DISPATCH) == 1 and DISPATCH[0][0] == "yoasobi-setup.yml" and DISPATCH[0][1]["en"] == "1" and DISPATCH[0][1]["gid"] == "99999999"
+print("setup dispatch:", len(DISPATCH))
 print("handle_ai: sent", len(sent_texts), "notes", len(notes))
 
 print("ALL OK" if ok else "FAILED")
