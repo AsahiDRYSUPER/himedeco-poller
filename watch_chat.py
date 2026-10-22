@@ -115,6 +115,40 @@ def yoasobi_ok(body: str) -> bool:
     return not any(after.startswith(w) for w in YOASOBI_NOT_AFTER)
 
 
+def yoasobi_reply(cli, shopdir, gid, text):
+    """姫デコチャットに返す（shift_auto.reply と同じ手順）。失敗した時に、どこで止まったかを件数・結果コードだけで出す（本文・名前は出さない）。"""
+    import json as _json
+    from heaven_http import BASE as _B, COMMU_IDS as _C
+    ref = f"{_B}/himedecochat/talk?girls_id={gid}&mid={_C[shopdir]}"
+    try:
+        cli.s.get(ref, timeout=30)
+        r = cli.s.post(_B + "/himedecochat/api/send_message",
+                       data=_json.dumps({"talk_message": text, "girls_id": int(gid)}, ensure_ascii=False).encode("utf-8"),
+                       headers={"Content-Type": "application/json; charset=utf-8", "X-Requested-With": "XMLHttpRequest", "Referer": ref},
+                       timeout=30)
+        r.encoding = "utf-8"
+        try:
+            j = r.json()
+        except Exception:
+            print(f"  送信の返事が読めない: HTTP {r.status_code} / {r.text[:80].replace(chr(10), ' ')}")
+            return False
+        if j.get("result") != 0:
+            print(f"  送信が通らなかった: result={j.get('result')} code={j.get('code')} msg={str(j.get('message') or j.get('msg') or '')[:80]}")
+            return False
+        t = cli.s.post(_B + "/himedecochat/api/new_list", json={"girls_id": int(gid)},
+                       headers={"X-Requested-With": "XMLHttpRequest", "Referer": ref}, timeout=30)
+        talks = (t.json().get("talk") or []) if t.json().get("result") == 0 else []
+        last = talks[-1] if talks else {}
+        ok = clean(text)[:20] in clean(last.get("body"))
+        if not ok:
+            print("  送ったはずの文が最後の発言に見当たらない（送信済みの可能性あり。二重送信はしない）")
+            return True      # APIは result=0 なので送れている。確認の比較の違いで失敗扱いにしない
+        return True
+    except Exception as e:
+        print("  送信で例外:", type(e).__name__)
+        return False
+
+
 def yoasobi_load():
     try:
         if YOASOBI_FILE.exists():
@@ -456,7 +490,7 @@ def main():
                 if x["shopdir"] not in YOASOBI_SHOPS or YOASOBI_ASK[:14] in x.get("prev_shop", "") or cli is None:
                     notify_one(x, auto=("need", False))        # 使っていない店／もう聞いた後／入れない時は人へ
                 else:
-                    ok = shift_auto.reply(cli, x["shopdir"], x["gid"], YOASOBI_ASK)
+                    ok = yoasobi_reply(cli, x["shopdir"], x["gid"], YOASOBI_ASK)
                     yoasobi_record(x, "asked" if ok else "reply_failed")
                     print(f'{x["shop"]}: 外国人OKの受け付け（お礼と3つの質問）を自動送信 {"OK" if ok else "NG"}')
                     notify_one(x, auto=("yoasobi_ok", ok))
@@ -466,7 +500,7 @@ def main():
             elif kind == "yoasobi_answer":
                 import shift_auto
                 cli = clis.get(x["shopdir"])
-                ok = bool(cli) and shift_auto.reply(cli, x["shopdir"], x["gid"], YOASOBI_THANKS)
+                ok = bool(cli) and yoasobi_reply(cli, x["shopdir"], x["gid"], YOASOBI_THANKS)
                 yoasobi_record(x, "answered")
                 print(f'{x["shop"]}: 外国人OKの3つの答えを受け取り、お礼を自動送信 {"OK" if ok else "NG"}')
                 notify_one(x, auto=("yoasobi_answer", ok))
