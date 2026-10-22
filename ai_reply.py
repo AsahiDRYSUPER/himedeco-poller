@@ -227,6 +227,15 @@ def selfcheck():
     print("AI: 鍵", "あり" if (os.environ.get("ANTHROPIC_API_KEY") or "").strip() else "なし",
           "/ 非公開メモ", "あり" if (os.environ.get("AI_PRIVATE_NOTES") or "").strip() else "なし",
           "/ モデル", MODEL, "/ 深さ", EFFORT)
+    k = os.environ.get("ANTHROPIC_API_KEY") or ""
+    # 鍵の中身は出さない。形だけ（長さ・決まった頭か・空白や改行が混じっていないか）
+    print("AI: 鍵の形 / 長さ", len(k), "/ sk-ant- で始まる", k.strip().startswith("sk-ant-"),
+          "/ 空白・改行が混じる", bool(re.search(r"\s", k)))
+    try:
+        import anthropic
+        print("AI: 部品の版", anthropic.__version__)
+    except Exception:
+        pass
     if not enabled():
         print("AI: ❌ 動かない（鍵が無いか、AI_REPLY=off）")
         return 1
