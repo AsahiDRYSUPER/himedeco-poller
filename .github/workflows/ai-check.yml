@@ -1,0 +1,27 @@
+name: ai-check
+
+# 姫デコチャットのAI返信（Claude）の鍵とモデルが通るかを、作り話のやりとりで1回だけ試す。
+# 誰にも送らない。ログには結果の種類と数だけ出す。手で起動した時だけ動く（2026-10-23）。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install anthropic requests
+      - name: Claude につながるか
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AI_PRIVATE_NOTES: ${{ secrets.AI_PRIVATE_NOTES }}
+          AI_REPLY: ${{ vars.AI_REPLY }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          AI_EFFORT: ${{ vars.AI_EFFORT }}
+          OUT_DIR: /tmp
+        run: python3 ai_reply.py --check
