@@ -87,7 +87,55 @@ LOGISTICS_REPLY = "個室・迎えの件は確認して連絡するね！"
 # 一希さんが返し方を決める子（キャストID、金庫 NO_AUTO_IDS にカンマ区切り）。この子には何も自動で送らず、通知だけ
 NO_AUTO = {int(x) for x in os.environ.get("NO_AUTO_IDS", "").replace(" ", "").split(",") if x.isdigit()}
 WAIT_MIN = 10                   # 続けて送ってくる途中で返さないよう、最後の発言からこの分数は待つ
-SHIFT_TALK = ("出勤", "出られ", "出れ", "◯日", "シフト")   # 店の直前の発言が出勤の話かどうか（出勤予定・断りに自動で返す条件）
+SHIFT_TALK = ("出勤", "出られ", "出れ", "◯日", "シフト")
+# 夜遊びヘブン（外国人向けサイト）の「外国人OK」の申し出（2026-10-22 一希さん「返信が来たら対応できる仕組みまで自動で」）
+# お知らせ「外国人OKと送るだけ」に対する返事。お礼と3つの質問を返し、控え（yoasobi_ok.json。キャストIDと店と時刻だけ）に残す。
+# 掲載・言語・オプションの設定は、その控えをもとに行う。使っているのは4店だけ（一希さん 2026-10-22）。
+YOASOBI_SHOPS = ("cg_kirakira", "s_matikado", "mrs_orange", "potya_reen")
+YOASOBI_OK_RE = re.compile(r"外国人\s*(?:OK|ok|Ok|ＯＫ|おっけ|オッケ|大丈夫|いけます|できます|やります|やってみ)")
+YOASOBI_NOT_AFTER = ("じゃ", "では", "ない", "無理", "ちょっと", "NG", "やめ", "できな", "？", "?", "かな", "ですか", "なの")
+YOASOBI_ASK = ("ありがとう！「外国人OK」で登録するね🌏\n"
+               "外国人向けサイト（夜遊びヘブン）に載せるので、3つだけ教えてください。\n"
+               "①写真はヘブンと同じでOK？（顔を出したくなければ「目元かくして」と書いてね）\n"
+               "②英語・中国語・韓国語で、少しでも話せるものはある？（なければ「なし」でOK。翻訳アプリで大丈夫）\n"
+               "③外国人のお客さんに、できないプレイ・オプションがあれば教えてね（なければ「なし」）\n"
+               "返事はこのチャットでOK。載せたらまた連絡します！")
+YOASOBI_THANKS = "ありがとう、受け取りました！設定して、載せたらまた連絡するね🌏"
+YOASOBI_FILE = OUT_DIR / "yoasobi_ok.json"
+
+
+def yoasobi_ok(body: str) -> bool:
+    """「外国人OK」の申し出か（「外国人OKじゃない」「外国人大丈夫？」は違う）。"""
+    m = YOASOBI_OK_RE.search(str(body or "").replace("\u3000", " "))
+    if not m:
+        return False
+    after = str(body or "")[m.end(): m.end() + 6]
+    return not any(after.startswith(w) for w in YOASOBI_NOT_AFTER)
+
+
+def yoasobi_load():
+    try:
+        if YOASOBI_FILE.exists():
+            return json.loads(YOASOBI_FILE.read_text(encoding="utf-8"))
+        r = requests.get(f"{PUBLIC_RAW}/yoasobi_ok.json?t={int(time.time())}", timeout=30)
+        return r.json() if r.status_code == 200 else {"items": []}
+    except Exception:
+        return {"items": []}
+
+
+def yoasobi_record(x, status):
+    """控えに残す（キャストID・店・時刻・状態だけ。名前も本文も入れない）。"""
+    d = yoasobi_load()
+    items = [it for it in d.get("items", []) if isinstance(it, dict)]
+    for it in items:
+        if it.get("gid") == x["gid"] and it.get("shop") == x["shopdir"]:
+            it["status"], it["at"] = status, x["at"]
+            break
+    else:
+        items.append({"gid": x["gid"], "shop": x["shopdir"], "at": x["at"], "status": status})
+    YOASOBI_FILE.write_text(json.dumps({"items": items, "at": datetime.now(JST).isoformat()}, ensure_ascii=False),
+                            encoding="utf-8")
+   # 店の直前の発言が出勤の話かどうか（出勤予定・断りに自動で返す条件）
 
 
 def clean_name(name: str) -> str:
@@ -274,6 +322,14 @@ def notify_one(x, result=None, urahime=None, auto=None):
         elif what == "need":
             body += "\n\n→ 要返信（自動では返していません）"
             extra = {"Priority": "high"}
+        elif what == "yoasobi_ok":
+            body += ("\n\n🌏 外国人OKの申し出。お礼と3つの質問（写真・話せる言葉・NGのプレイ）を自動で返しました。答えが来たらまた通知します") if ok else \
+                    "\n\n！ 外国人OKの申し出ですが、自動の返事が送れませんでした。手で返してください"
+            extra = {"Tags": "earth_asia", "Priority": "high"} if ok else {"Tags": "warning", "Priority": "high"}
+        elif what == "yoasobi_answer":
+            body += ("\n\n🌏 外国人OKの3つの答え。「受け取りました」と自動で返しました。→ 夜遊びヘブンへの掲載と設定は、控え（yoasobi_ok.json）をもとに行います") if ok else \
+                    "\n\n！ 外国人OKの3つの答えですが、自動の返事が送れませんでした。手で返してください"
+            extra = {"Tags": "earth_asia", "Priority": "high"}
         elif what == "hold_reply":
             body += ("\n\n→ 読み切れない連絡なので「" + reply_rules.HOLD_TEXT + "」とだけ自動で返しました。中身は手で対応してください") if ok else \
                     "\n\n！ 自動の返事が送れませんでした。手で返してください"
@@ -342,7 +398,9 @@ def main():
         x["read"] = read_shift_reply(x.get("raw") or x["body"], now.replace(tzinfo=None), x["shopdir"])
     for x in fresh:
         x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS) and x["gid"] not in NO_AUTO
-        x["kind"] = "urahime" if x["urahime"] else (
+        x["yoasobi"] = yoasobi_ok(x["body"]) and x["gid"] not in NO_AUTO
+        x["yoasobi_answer"] = (not x["yoasobi"]) and YOASOBI_ASK[:14] in x.get("prev_shop", "") and x["gid"] not in NO_AUTO
+        x["kind"] = "urahime" if x["urahime"] else "yoasobi_ok" if x["yoasobi"] else "yoasobi_answer" if x["yoasobi_answer"] else (
             "clear" if x["read"]["status"] in ("clear", "partial") else
             reply_rules.classify(x.get("raw") or x["body"], now.replace(tzinfo=None), x["shopdir"]))
         x["logistics"] = any(w in x["body"] for w in LOGISTICS_WORDS)
@@ -383,6 +441,23 @@ def main():
                 notify_one(x, auto=("hold", False))
             elif kind == "urahime":
                 notify_one(x, urahime=urahime)
+            elif kind == "yoasobi_ok":
+                import shift_auto
+                cli = clis.get(x["shopdir"])
+                if x["shopdir"] not in YOASOBI_SHOPS or YOASOBI_ASK[:14] in x.get("prev_shop", "") or cli is None:
+                    notify_one(x, auto=("need", False))        # 使っていない店／もう聞いた後／入れない時は人へ
+                else:
+                    ok = shift_auto.reply(cli, x["shopdir"], x["gid"], YOASOBI_ASK)
+                    yoasobi_record(x, "asked" if ok else "reply_failed")
+                    print(f'{x["shop"]}: 外国人OKの受け付け（お礼と3つの質問）を自動送信 {"OK" if ok else "NG"}')
+                    notify_one(x, auto=("yoasobi_ok", ok))
+            elif kind == "yoasobi_answer":
+                import shift_auto
+                cli = clis.get(x["shopdir"])
+                ok = bool(cli) and shift_auto.reply(cli, x["shopdir"], x["gid"], YOASOBI_THANKS)
+                yoasobi_record(x, "answered")
+                print(f'{x["shop"]}: 外国人OKの3つの答えを受け取り、お礼を自動送信 {"OK" if ok else "NG"}')
+                notify_one(x, auto=("yoasobi_answer", ok))
             elif kind == "clear" and SHIFT_AUTO:
                 import shift_auto
                 res = shift_auto.handle(clis.get(x["shopdir"]), x["shopdir"], x["shop"], x["gid"], x["name"],
