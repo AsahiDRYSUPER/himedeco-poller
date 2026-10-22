@@ -44,6 +44,8 @@ jobs:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           YOASOBI_SWEEP_CYCLES: ${{ vars.YOASOBI_SWEEP_CYCLES }}   # 夜遊びの見回りの間隔（受け口が動いたら 12）
+          AUTO_YOASOBI: ${{ vars.AUTO_YOASOBI }}           # 夜遊び：定型（A）のAIの返事をお客さんにそのまま送るか（on/off。既定 off＝下書きを通知）
+          YOASOBI_SHOPS: ${{ vars.YOASOBI_SHOPS }}         # 夜遊びを見る店（空なら cg_kirakira）
           SHIFT_AUTO: ${{ vars.SHIFT_AUTO }}
           AUTO_REPLY: ${{ vars.AUTO_REPLY }}
           NO_AUTO_IDS: ${{ secrets.NO_AUTO_IDS }}
