@@ -41,12 +41,13 @@ CAST_SCHEMA = {
             "type": "object",
             "properties": {
                 "is_answer": {"type": "boolean"},
+                "complete": {"type": "boolean"},
                 "wants_listed": {"type": "boolean"},
                 "lang_en": LANG, "lang_zh": LANG, "lang_kr": LANG,
                 "ng": {"type": "array", "items": {"type": "string"}},
                 "photo": {"type": "string", "enum": ["same", "hide_eyes", "no_face", "ask_again", "unknown"]},
             },
-            "required": ["is_answer", "wants_listed", "lang_en", "lang_zh", "lang_kr", "ng", "photo"],
+            "required": ["is_answer", "complete", "wants_listed", "lang_en", "lang_zh", "lang_kr", "ng", "photo"],
             "additionalProperties": False,
         },
         "learned": {"type": "string"},
@@ -60,7 +61,9 @@ OUTPUT_RULES = """
 - action：reply＝返事を送る／reply_and_notify＝返事を送って一希さんにも知らせる／notify_only＝送らずに一希さんに知らせるだけ／no_reply＝何もしない
 - reply：女の子に送る文（450字以内）。no_reply・notify_only の時は空
 - owner_note：一希さんに知らせたいこと（短く、名前は入れてよい。知らせることが無ければ空）
-- yoasobi：YOASOBIの3つの質問への答え・外国人OKの申し出が含まれていれば埋める。無関係なら is_answer=false, wants_listed=false, 言葉は "0", ng=[], photo="unknown"
+- yoasobi：YOASOBIの3つの質問への答え・外国人OKの申し出が含まれていれば埋める。無関係なら is_answer=false, complete=false, wants_listed=false, 言葉は "0", ng=[], photo="unknown"
+  - complete：①写真 ②言葉 ③NG の3つとも（直近のやりとりも合わせて）分かった時だけ true。true になると、設定を入れる仕組みが自動で動き、本人に「設定したよ」が届く。足りないものがある・聞き返している時は false
+  - ng：女の子の言葉のまま（「ごっくん」「アナル系全て」「口内射精」など）。「なし」「日本人と同じ」なら []
 - learned：このやり取りで分かった、今後も使える一般的な決まりがあれば1文（女の子の名前・個人の事情は書かない）。無ければ空
 """
 
