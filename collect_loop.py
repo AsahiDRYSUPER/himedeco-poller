@@ -15,8 +15,10 @@ def publish():
 
 
 end = time.time() + LOOP_MIN * 60
+_cycle = 0
 while True:
     t0 = time.time()
+    _cycle += 1
     r = subprocess.run([sys.executable, "collect_shops.py"])
     # 姫デコチャットの見張り(新しい連絡があればスマホへ通知)。ここで失敗しても、ボードのデータ更新は止めない
     try:
