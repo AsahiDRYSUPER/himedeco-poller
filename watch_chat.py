@@ -328,6 +328,9 @@ def notify_one(x, result=None, urahime=None, auto=None):
             body += ("\n\n🌏 外国人OKの申し出。お礼と3つの質問（写真・話せる言葉・NGのプレイ）を自動で返しました。答えが来たらまた通知します") if ok else \
                     "\n\n！ 外国人OKの申し出ですが、自動の返事が送れませんでした。手で返してください"
             extra = {"Tags": "earth_asia", "Priority": "high"} if ok else {"Tags": "warning", "Priority": "high"}
+        elif what == "yoasobi_topic":
+            body += "\n\n🌏 外国人（YOASOBI）の話。定型は返していません。クロードが会話の中で聞き返して返します"
+            extra = {"Tags": "earth_asia", "Priority": "high"}
         elif what == "yoasobi_answer":
             body += ("\n\n🌏 外国人OKの3つの答え。「受け取りました」と自動で返しました。→ 夜遊びヘブンへの掲載と設定は、控え（yoasobi_ok.json）をもとに行います") if ok else \
                     "\n\n！ 外国人OKの3つの答えですが、自動の返事が送れませんでした。手で返してください"
@@ -403,7 +406,10 @@ def main():
         x["yoasobi"] = yoasobi_ok(x["body"]) and x["gid"] not in NO_AUTO
         x["yoasobi_answer"] = (not x["yoasobi"]) and x["gid"] not in NO_AUTO and (
             YOASOBI_ASK[:14] in x.get("prev_shop", "") or YOASOBI_PROFILE_MARK in x.get("prev_shop", ""))
+        # 夜遊び（外国人）の話は、定型の「確認して連絡します」を返さず人（クロード）が会話の中で聞き返す（一希さん 2026-10-22）
+        x["yoasobi_topic"] = any(w in x["body"] for w in ("外国人", "YOASOBI", "yoasobi", "Yoasobi", "ヨアソビ", "夜遊び"))
         x["kind"] = "urahime" if x["urahime"] else "yoasobi_ok" if x["yoasobi"] else "yoasobi_answer" if x["yoasobi_answer"] else (
+            "yoasobi_topic" if x["yoasobi_topic"] else
             "clear" if x["read"]["status"] in ("clear", "partial") else
             reply_rules.classify(x.get("raw") or x["body"], now.replace(tzinfo=None), x["shopdir"]))
         x["logistics"] = any(w in x["body"] for w in LOGISTICS_WORDS)
@@ -455,6 +461,8 @@ def main():
                     print(f'{x["shop"]}: 外国人OKの受け付け（お礼と3つの質問）を自動送信 {"OK" if ok else "NG"}')
                     notify_one(x, auto=("yoasobi_ok", ok))
                     x["yoasobi_listing"] = True        # 載せる仕組み（cast-mypage）をあとでまとめて起動する
+            elif kind == "yoasobi_topic":
+                notify_one(x, auto=("yoasobi_topic", False))
             elif kind == "yoasobi_answer":
                 import shift_auto
                 cli = clis.get(x["shopdir"])
