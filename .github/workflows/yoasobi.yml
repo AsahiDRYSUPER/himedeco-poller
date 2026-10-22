@@ -12,8 +12,7 @@ on:
         default: "cg_kirakira"
   repository_dispatch:
     types: [yoasobi-chat]
-  schedule:
-    - cron: "*/10 * * * *"     # 当面は10分ごとの見回り（公開リポジトリ＝無料）。メール通知からの起動（repository_dispatch）に切り替えたら外す
+  # 定期は collect.yml の見張りの中（collect_loop.py、2回に1回＝10分ごと）で回す。ここは手動と repository_dispatch だけ（cronは当てにならないので外した。2026-10-22）
 
 permissions:
   contents: write
