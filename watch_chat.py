@@ -101,6 +101,8 @@ YOASOBI_ASK = ("ありがとう！「外国人OK」で登録するね🌏\n"
                "③外国人のお客さんに、できないプレイ・オプションがあれば教えてね（なければ「なし」）\n"
                "返事はこのチャットでOK。載せたらまた連絡します！")
 YOASOBI_THANKS = "ありがとう、受け取りました！設定して、載せたらまた連絡するね🌏"
+# すでに載っている子へのプロフの質問（cast-mypage から1対1で送る文の目印。これが店の直前の発言にあれば、次の返事は答え）
+YOASOBI_PROFILE_MARK = "外国人向けサイト（YOASOBIヘブン）"
 YOASOBI_FILE = OUT_DIR / "yoasobi_ok.json"
 
 
@@ -399,7 +401,8 @@ def main():
     for x in fresh:
         x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS) and x["gid"] not in NO_AUTO
         x["yoasobi"] = yoasobi_ok(x["body"]) and x["gid"] not in NO_AUTO
-        x["yoasobi_answer"] = (not x["yoasobi"]) and YOASOBI_ASK[:14] in x.get("prev_shop", "") and x["gid"] not in NO_AUTO
+        x["yoasobi_answer"] = (not x["yoasobi"]) and x["gid"] not in NO_AUTO and (
+            YOASOBI_ASK[:14] in x.get("prev_shop", "") or YOASOBI_PROFILE_MARK in x.get("prev_shop", ""))
         x["kind"] = "urahime" if x["urahime"] else "yoasobi_ok" if x["yoasobi"] else "yoasobi_answer" if x["yoasobi_answer"] else (
             "clear" if x["read"]["status"] in ("clear", "partial") else
             reply_rules.classify(x.get("raw") or x["body"], now.replace(tzinfo=None), x["shopdir"]))
