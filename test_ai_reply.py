@@ -86,5 +86,16 @@ ok &= len(DISPATCH) == 1 and DISPATCH[0][0] == "yoasobi-setup.yml" and DISPATCH[
 print("setup dispatch:", len(DISPATCH))
 print("handle_ai: sent", len(sent_texts), "notes", len(notes))
 
-print("ALL OK" if ok else "FAILED")
-sys.exit(0 if ok else 1)
+print("cast:", "ALL OK" if ok else "FAILED")
+
+# お客さん（夜遊び）向け：決まりの中なら reply、判断が要るなら draft、送ってよい形の確かめ
+CUST = {"category": "A", "action": "reply", "reply": "提携ホテルはございません。岡山市内のホテルでしたらご派遣できます。", "owner_note": "", "reason": "提携ホテルの有無は決まり"}
+anthropic.Anthropic = fake_client(CUST)
+c, whyc = ai_reply.ask_customer("キラ学", "Chen", "[客] 東横インは予約できますか？", "提携しているホテルはありますか？")
+ok2 = (whyc == "ok" and c["category"] == "A")
+ok2 &= "夜遊びヘブン" in CALLS[-1]["system"][0]["text"] and "取り分" not in CALLS[-1]["system"][0]["text"]
+ok2 &= ai_reply.check_customer(c) == (True, "ok")
+ok2 &= ai_reply.check_customer(dict(CUST, category="B", action="draft"))[0] is False
+ok2 &= ai_reply.check_customer(dict(CUST, reply="特別に割引します"))[0] is False
+print("customer:", whyc, "ALL OK" if ok2 else "FAILED")
+sys.exit(0 if (ok and ok2) else 1)
