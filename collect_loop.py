@@ -2,6 +2,7 @@
 GitHubの定期実行は数十分遅れることがあるため、1回の実行の中で何度も回して、5分ごとの更新を保つ。"""
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -48,7 +49,9 @@ def wait_mail(seconds):
                 _mail_seen.add(d["id"])
                 _mail_since = d["id"]
                 r.close()
-                return True
+                # 通知メールの本文に shop?id=<店のcommuId> が入っている → どの店か分かる（分からなければ全部の店）
+                m = re.search(r"[?&]id=(\d{4,})", (d.get("message") or "") + " " + (d.get("title") or ""))
+                return {"shop_id": m.group(1) if m else ""}
     except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
         # 待ち時間いっぱいで切れたのは正常（流しながら読む時は ConnectionError の形で来る）
         if "timed out" not in str(e).lower() and time.time() - t0 < seconds - 5:
@@ -60,10 +63,26 @@ def wait_mail(seconds):
     return False
 
 
-def yoasobi_watch(reason):
+def _shopdir_of(shop_id):
+    """店のcommuId → shopdir。見張りの店の中に無ければ空（＝全部の店を見る）"""
     try:
-        print("夜遊びの見張り:", reason)
-        subprocess.run([sys.executable, "yoasobi_watch.py"], timeout=600)
+        from heaven_http import COMMU_IDS
+        for k, v in COMMU_IDS.items():
+            if str(v) == str(shop_id):
+                return k
+    except Exception:
+        pass
+    return ""
+
+
+def yoasobi_watch(reason, shop_id=""):
+    try:
+        env = dict(os.environ)
+        sd = _shopdir_of(shop_id) if shop_id else ""
+        if sd:
+            env["YOASOBI_SHOPS"] = sd         # メールで分かった店だけを見に行く（速く返すため）
+        print("夜遊びの見張り:", reason, f"（店 {sd}）" if sd else "")
+        subprocess.run([sys.executable, "yoasobi_watch.py"], timeout=600, env=env)
     except Exception as _e:
         print("夜遊びの見張りで失敗:", type(_e).__name__)
 
@@ -117,5 +136,6 @@ while True:
         remain = INTERVAL - (time.time() - t0)
         if remain <= 5:
             break
-        if wait_mail(remain) and os.environ.get("YOASOBI_IN_LOOP", "on").lower() not in ("off", "0", "false"):
-            yoasobi_watch("メールの合図")
+        got = wait_mail(remain)
+        if got and os.environ.get("YOASOBI_IN_LOOP", "on").lower() not in ("off", "0", "false"):
+            yoasobi_watch("メールの合図", (got or {}).get("shop_id", "") if isinstance(got, dict) else "")
