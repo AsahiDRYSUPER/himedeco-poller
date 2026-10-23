@@ -1,0 +1,29 @@
+name: si9-diag
+
+# 新着んの実際の様子を読むだけ（保存も送信もしない）。日本の実行機で動かす。名前はログに出ない。2026-10-23
+on:
+  workflow_dispatch:
+    inputs:
+      shops:
+        description: "店（空白区切り。空なら7店）"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: [self-hosted, jp]
+    timeout-minutes: 15
+    env:
+      PY: /Users/yamazakikazuki/jp-venv/bin/python
+      LANG: ja_JP.UTF-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: 新着んを読む（読むだけ）
+        env:
+          SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
+          SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
+        run: $PY si9_diag.py ${{ inputs.shops }}
