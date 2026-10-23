@@ -292,6 +292,31 @@ def send_in_thread(chat, text):
     return sent, how
 
 
+def probe_thread(shopdir, name):
+    """スレッドを開いて、入力欄とボタンの作りだけを出す（本文・名前は出さない）。送信の段が合わない時の調べ（2026-10-23）。"""
+    opened = open_chat(shopdir)
+    if not opened:
+        return False
+    p, b, chat = opened
+    try:
+        rows = chat.evaluate(ROWS_JS)
+        row = next((t for t in rows if t.split(" ")[0] == name), None)
+        if not row:
+            log("送り先のスレッドが見つかりません"); return False
+        chat.evaluate("""(t) => { const vis = e => !!(e.offsetWidth || e.offsetHeight); const head = t.slice(0, 40);
+            const els = Array.from(document.querySelectorAll('div, li, a')).filter(e => vis(e) && (e.innerText || '').trim().replace(/\s+/g, ' ').startsWith(head));
+            const e = els.sort((a, b) => a.innerText.length - b.innerText.length)[0]; if (e) { e.scrollIntoView({block: 'center'}); e.click(); } }""", row)
+        chat.wait_for_timeout(3500)
+        info = chat.evaluate("""() => { const vis = e => !!(e.offsetWidth || e.offsetHeight); const r = e => { const b = e.getBoundingClientRect(); return Math.round(b.x) + ',' + Math.round(b.y) + ' ' + Math.round(b.width) + 'x' + Math.round(b.height); };
+            return {url: location.href.replace(/id=\d+/, 'id=…'), size: innerWidth + 'x' + innerHeight,
+              inputs: Array.from(document.querySelectorAll('input, textarea, [contenteditable=true]')).map(e => ({tag: e.tagName, type: e.type || '', ph: (e.placeholder || '').slice(0, 20), vis: vis(e), ro: !!e.readOnly, dis: !!e.disabled, at: r(e), cls: (e.className || '').toString().slice(0, 50)})),
+              buttons: Array.from(document.querySelectorAll('button, [role=button], input[type=submit]')).filter(vis).map(e => ({t: (e.innerText || e.value || e.getAttribute('aria-label') || '').trim().slice(0, 12), at: r(e), svg: !!e.querySelector('svg, img')})).slice(0, 40)}; }""")
+        log("スレッドの作り:", json.dumps(info, ensure_ascii=False))
+        return True
+    finally:
+        b.close(); p.stop()
+
+
 def send_one(shopdir, name, text):
     """会話リストの名前でスレッドを開き、1通送って、送れたかを読み直して確かめる（名前・本文はログに出さない）。"""
     opened = open_chat(shopdir)
@@ -420,6 +445,8 @@ def watch_shop(shopdir, st, now):
 
 def main():
     now = datetime.now(JST)
+    if os.environ.get("YOASOBI_PROBE_NAME", "").strip():
+        return 0 if probe_thread(SHOPS[0], os.environ["YOASOBI_PROBE_NAME"].strip()) else 1
     if SEND_NAME and SEND_TEXT:
         ok = send_one(SHOPS[0], SEND_NAME, SEND_TEXT)
         return 0 if ok else 1
