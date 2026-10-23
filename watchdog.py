@@ -65,19 +65,49 @@ def check_si9():
     r = requests.get(f"https://raw.githubusercontent.com/{REPO}/data/si9_status.json", params={"t": int(now.timestamp())}, timeout=30)
     r.raise_for_status()
     shops = (r.json() or {}).get("shops") or {}
-    ats = [age_hours(v.get("at")) for v in shops.values() if isinstance(v, dict) and v.get("at")]
+    recs = [v for v in shops.values() if isinstance(v, dict)]
+    ats = [age_hours(v.get("at")) for v in recs if v.get("at")]
     ats = [a for a in ats if a is not None]
     newest = min(ats) if ats else None
-    print(f"新着んの並び替え: 店{len(shops)}・最新の読み取り {newest:.2f}時間前" if newest is not None else "新着ん: 時刻が読めない")
+    # 「読んだ時刻」だけでは、毎回失敗していても動いて見える（2026-10-23 新着んが丸1日止まっていたのに鳴らなかった）。失敗と、最後に送れた時刻も見る
+    errs = [v for v in recs if v.get("error")]
+    sent = [age_hours(v.get("sent_at")) for v in recs if v.get("sent_at")]
+    sent = [a for a in sent if a is not None]
+    last_sent = min(sent) if sent else None
+    print(f"新着んの並び替え: 店{len(shops)}・最新の読み取り {newest:.2f}時間前・失敗している店 {len(errs)}・最後に送れたのは {last_sent:.1f}時間前" if newest is not None else "新着ん: 時刻が読めない")
     if newest is None or newest > 1.5:
         return ["新着んの並び替えが止まっている（90分以上更新なし）。himedeco-poller の board-collect を確認"]
+    probs = []
+    if recs and len(errs) == len(recs):
+        kinds = sorted({str(v.get("error"))[:40] for v in errs})
+        probs.append(f"新着んの並び替えが全店で失敗している（{'／'.join(kinds)[:120]}）。クラウドからのログインが拒否されていないか確認")
+    if last_sent is None or last_sent > 4:
+        probs.append(f"新着んへ4時間以上送れていない（最後 {last_sent:.1f}時間前）" if last_sent is not None else "新着んへ送れた記録が無い")
+    return probs
+
+
+def check_sokuhime():
+    """即ヒメ直し（ヘブンの箱の時間付け）。生きている印 sokuhime_status.json の error と時刻を見る（名前なし）"""
+    now = datetime.now(JST)
+    h = now.hour
+    if not (h >= 9 or h < 2):
+        return []
+    r = requests.get(f"https://raw.githubusercontent.com/{REPO}/data/sokuhime_status.json", params={"t": int(now.timestamp())}, timeout=30)
+    r.raise_for_status()
+    d = r.json() or {}
+    age = age_hours(d.get("at"))
+    print(f"即ヒメ直し: 最終 {age:.2f}時間前・error={d.get('error') or '-'}" if age is not None else "即ヒメ直し: 時刻が読めない")
+    if age is None or age > 1.5:
+        return ["即ヒメ直しが止まっている（90分以上更新なし）。himedeco-poller の board-collect を確認"]
+    if d.get("error"):
+        return [f"即ヒメ直しが失敗している（{str(d.get('error'))[:60]}）。CTIにクラウドから届いているか確認"]
     return []
 
 
 def main():
     force = "--test" in sys.argv
     probs = []
-    for fn in (check_mypage, check_si9):
+    for fn in (check_mypage, check_si9, check_sokuhime):
         try:
             probs += fn()
         except Exception as e:
@@ -86,7 +116,7 @@ def main():
     if not probs:
         print("異常なし")
         if force:
-            post_ntfy("見張り: 異常なし（手動の確認）", f"{now:%m/%d %H:%M} 裏姫デコ更新・新着んとも動いている", tags="white_check_mark")
+            post_ntfy("見張り: 異常なし（手動の確認）", f"{now:%m/%d %H:%M} 裏姫デコ更新・新着ん・即ヒメ直しとも動いている", tags="white_check_mark")
         return 0
     print("異常:", *probs, sep="\n  ")
     if force or now.hour in ALERT_HOURS:
