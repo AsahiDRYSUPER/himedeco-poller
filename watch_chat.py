@@ -67,6 +67,8 @@ OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 PUBLIC_RAW = os.environ.get("PUBLIC_RAW", "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/data")
 SEEN_FILE = OUT_DIR / "chat_seen.json"
+# 記録が無い時（初回）でも、ここ何時間の返事待ちは普通どおり返すか（0＝全部流す。2026-10-23）
+BACKLOG_HOURS = float(os.environ.get("CHAT_BACKLOG_HOURS", "12") or 0)
 
 SHOPS = {
     "cg_kirakira": "キラキラ学園", "s_matikado": "街角レディ", "mrs_orange": "オレンジな気持ち",
@@ -486,9 +488,16 @@ def main():
         print("確認できなかった店:", " / ".join(errors))
 
     if first_run:
-        save_seen(all_ids)
-        print(f"初回のため、いまの{len(all_ids)}件は通知せずに記録しました(ここから先の新しい連絡だけ通知します)")
-        return
+        # 記録（chat_seen.json）が無い時。BACKLOG_HOURS 時間より前の返事待ちだけ「見たことに」して、それより新しいものは普通どおり扱う
+        # （2026-10-23 日本側の公開が chat_seen.json を消していて、毎回「初回」になり、返事待ちを返さずに流していた。0＝前のとおり全部流す）
+        recent = [x for x in fresh if BACKLOG_HOURS > 0 and (when({"create_date": x["at"]}) or now) >= now - timedelta(hours=BACKLOG_HOURS)]
+        old_ids = all_ids - {x["id"] for x in recent}
+        print(f"初回のため、{BACKLOG_HOURS}時間より前の{len(old_ids)}件は通知せずに記録しました（ここ{BACKLOG_HOURS}時間の{len(recent)}件は普通どおり扱います）")
+        if not recent:
+            save_seen(all_ids)
+            return
+        seen = set(old_ids)
+        fresh = recent
     if not fresh:
         save_seen(all_ids | seen)
         print("新しい連絡はありません")

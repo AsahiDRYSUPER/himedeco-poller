@@ -35,8 +35,13 @@ def wait_mail(seconds):
     t0 = time.time()
     try:
         # since は「最後に受け取ったメッセージのID」（時刻だと同じメッセージが何度も返る。2026-10-23 1時間空回りした）
-        r = requests.get(f"{NTFY_HOST}/{MAIL_TOPIC}/json", params={"since": _mail_since}, stream=True, timeout=(15, seconds))
+        # ntfy は約45秒ごとに keepalive を送ってくるので、読みの時間切れ（timeout）では切れない。
+        # 自分で「seconds 秒たったら閉じる」をしないと永遠に待つ（2026-10-23 1周目のあと75分固まり、チャットの返信が止まった）
+        r = requests.get(f"{NTFY_HOST}/{MAIL_TOPIC}/json", params={"since": _mail_since}, stream=True, timeout=(15, min(seconds, 90)))
         for line in r.iter_lines():
+            if time.time() - t0 >= seconds:
+                r.close()
+                return False
             if not line:
                 continue
             try:
