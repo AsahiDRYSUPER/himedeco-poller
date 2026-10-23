@@ -4,6 +4,8 @@ name: jp-sokuhime
 # 2026-10-23 GitHubのクラウド（米国）からは CTI が接続拒否・新着んがログインで403になったため、この2つだけ日本側で動かす。
 # 営業時間（JST 9:00〜翌2:50）に10分ごと。やることは今までの board-collect の中と同じ（即ヒメの時間付け・新着んの並び替え）。
 
+# 2026-10-23 GitHub の定期実行（schedule）はこのアカウントでは4〜5時間に1回しか動かないと分かった。実際の起動は Mac の起動係（~/jp-dispatch/dispatch.sh、launchd で10分ごと・毎時、gh workflow run）が送る。下の schedule は予備。
+
 on:
   workflow_dispatch:
     inputs:

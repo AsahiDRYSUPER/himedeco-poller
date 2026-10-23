@@ -3,6 +3,8 @@ name: watchdog
 # クラウド自動化の見張り（読むだけ）。1時間に1回、裏姫デコ更新と新着んの並び替えが止まっていないかを見て、
 # 止まっていればスマホ（ntfy）へ知らせる。非公開リポジトリの実行枠が尽きても、ここ（公開・無料）は動く。2026-10-20
 
+# 2026-10-23 GitHub の定期実行（schedule）はこのアカウントでは4〜5時間に1回しか動かないと分かった。実際の起動は Mac の起動係（~/jp-dispatch/dispatch.sh、launchd で10分ごと・毎時、gh workflow run）が送る。下の schedule は予備。
+
 on:
   workflow_dispatch:
     inputs:
