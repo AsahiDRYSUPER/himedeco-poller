@@ -595,6 +595,11 @@ def parse_sorting(raw):
 
 
 def is_sorting(page):
+    # is_sorting は並び替えの画面からでないと 403 で弾かれる（10/23 確認：更新結果の画面からは ERR 403、並び替えの画面からは false）。
+    # 403 だと前の送信が確かめられず、同じ並びを2回送っていた → 別の画面にいたら並び替えの画面へ移ってから聞く
+    if "/girl/sort.php" not in (page.url or ""):
+        page.goto(f"{BASE}/girl/sort.php", wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(1500)
     r = page.evaluate("""async () => { try { const r = await $.ajax({type: 'POST', url: '/ajax/girl/data.php', data: {method: 'is_sorting'}});
         return typeof r === 'string' ? r : JSON.stringify(r); } catch (e) { return 'ERR ' + e.status; } }""")
     v = parse_sorting(r)
