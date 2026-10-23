@@ -1,0 +1,65 @@
+name: jp-sokuhime
+
+# 日本のIPで動く実行機（self-hosted, jp）で、即ヒメ直しと新着んの並び替えを回す。
+# 2026-10-23 GitHubのクラウド（米国）からは CTI が接続拒否・新着んがログインで403になったため、この2つだけ日本側で動かす。
+# 営業時間（JST 9:00〜翌2:50）に10分ごと。やることは今までの board-collect の中と同じ（即ヒメの時間付け・新着んの並び替え）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "見るだけ（即ヒメは --dry、新着んは案を作るだけ）"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "*/10 0-17 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: jp-sokuhime
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: [self-hosted, jp]
+    timeout-minutes: 20
+    env:
+      PY: /Users/yamazakikazuki/jp-venv/bin/python
+      LANG: ja_JP.UTF-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: 道具がそろっているか
+        run: $PY -c "import playwright, requests, bs4, cryptography; print('ok')"
+      - name: 即ヒメ直し（CTIを読んでヘブンの箱を直す）
+        env:
+          CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
+          CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
+          CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
+          CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
+          TODO_KEY: ${{ secrets.TODO_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          CASTS_MAP: ${{ secrets.CASTS_MAP }}
+          NO_AUTO_IDS: ${{ secrets.NO_AUTO_IDS }}
+        run: |
+          mkdir -p out
+          if [ "${{ inputs.dry }}" = "true" ]; then $PY sokuhime_fix.py --dry; else $PY sokuhime_fix.py; fi
+      - name: 新着んの並び替え（main の si9_mode.json に従う）
+        if: always()
+        env:
+          CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
+          CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
+          CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
+          SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
+          SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
+          TODO_KEY: ${{ secrets.TODO_KEY }}
+          SI9_SORT_MODE: ${{ inputs.dry && 'dry' || '' }}
+          GH_TOKEN: ${{ github.token }}
+        run: $PY si9_sort.py
+      - name: 記録を公開（data ブランチ）
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash publish_data.sh

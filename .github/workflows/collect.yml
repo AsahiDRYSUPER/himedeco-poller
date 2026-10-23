@@ -50,10 +50,7 @@ jobs:
           CASTS_MAP: ${{ secrets.CASTS_MAP }}
           TODO_KEY: ${{ secrets.TODO_KEY }}
           BOOTH_URL: ${{ secrets.BOOTH_URL }}
-          CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
-          CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
-          SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
-          SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
+          # CTI と新着んの鍵はここでは渡さない（2026-10-23 クラウドの米国IPが両サイトに遮断された。即ヒメ直し・新着んは jp-sokuhime.yml＝日本の実行機で動かす）
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AI_REPLY: ${{ vars.AI_REPLY }}
           AI_MODEL: ${{ vars.AI_MODEL }}
