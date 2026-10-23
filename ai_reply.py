@@ -46,8 +46,17 @@ CAST_SCHEMA = {
                 "lang_en": LANG, "lang_zh": LANG, "lang_kr": LANG,
                 "ng": {"type": "array", "items": {"type": "string"}},
                 "photo": {"type": "string", "enum": ["same", "hide_eyes", "no_face", "ask_again", "unknown"]},
+                "all_options_ok": {"type": "boolean"},
+                "three_p": {"type": "string", "enum": ["ok", "ng", "unknown"]},
+                "qa": {
+                    "type": "object",
+                    "properties": {"q1": {"type": "string"}, "q2": {"type": "string"}, "q3": {"type": "string"}, "q4": {"type": "string"},
+                                   "q5": {"type": "string"}, "q6": {"type": "string"}, "q7": {"type": "string"}},
+                    "required": ["q1", "q2", "q3", "q4", "q5", "q6", "q7"],
+                    "additionalProperties": False,
+                },
             },
-            "required": ["is_answer", "complete", "wants_listed", "lang_en", "lang_zh", "lang_kr", "ng", "photo"],
+            "required": ["is_answer", "complete", "wants_listed", "lang_en", "lang_zh", "lang_kr", "ng", "photo", "all_options_ok", "three_p", "qa"],
             "additionalProperties": False,
         },
         "learned": {"type": "string"},
@@ -63,7 +72,11 @@ OUTPUT_RULES = """
 - owner_note：一希さんに知らせたいこと（短く、名前は入れてよい。知らせることが無ければ空）
 - yoasobi：YOASOBIの3つの質問への答え・外国人OKの申し出が含まれていれば埋める。無関係なら is_answer=false, complete=false, wants_listed=false, 言葉は "0", ng=[], photo="unknown"
   - complete：①写真 ②言葉 ③NG の3つとも（直近のやりとりも合わせて）分かった時だけ true。true になると、設定を入れる仕組みが自動で動き、本人に「設定したよ」が届く。足りないものがある・聞き返している時は false
-  - ng：女の子の言葉のまま（「ごっくん」「アナル系全て」「口内射精」など）。「なし」「日本人と同じ」なら []
+  - ng：女の子の言葉のまま（「ごっくん」「アナル系全て」「口内射精」など）。「なし」「日本人と同じ」「全部OK」なら []
+  - all_options_ok：オプションについて「全部OK／全部できる」と言った時だけ true
+  - three_p：3Pコースを外国人のお客さんにも OK と言ったら "ok"、NG なら "ng"、触れていなければ "unknown"
+  - qa：7問の答え（q1 おすすめの岡山の観光地／q2 おすすめのご飯屋／q3 外国に行ったことがあるか／q4 英会話ができるか／q5 好きなアニメ／q6 好きな音楽／q7 休みの日）。答えがあれば女の子の言葉を整えて短く（30字以内、絵文字なし）。無ければ ""
+  - 7問の答えや「できないオプション」だけが届いた時も is_answer=true。complete は「3つの質問」と「7問」のどちらかがそろえば true でよい（設定の仕組みは入っている分だけ入れる）
 - learned：このやり取りで分かった、今後も使える一般的な決まりがあれば1文（女の子の名前・個人の事情は書かない）。無ければ空
 """
 
