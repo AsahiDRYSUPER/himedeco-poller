@@ -268,23 +268,27 @@ def read_thread(chat, row_text):
     return " / ".join(parts)[:900], "\n".join(hist)
 
 
-def send_in_thread(chat, text):
-    """いま開いているスレッドに1通送り、画面に出たかで確かめる。返す: (送れたか, 押したもの)"""
-    box = chat.locator("textarea, [contenteditable=true]").last
-    if not box.count():
+def _type_and_send(chat, text):
+    """開いているスレッドの入力欄（見えていて readOnly でない textarea。MUI は同じ場所に高さ0の影の textarea もある）に
+    本文を入れ、入力欄の右にある送信のアイコンを押す。返す: (送れたか, 押したもの)。2026-10-23 調べた作りに合わせた。"""
+    put = chat.evaluate("""(txt) => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
+        const ta = Array.from(document.querySelectorAll('textarea')).find(t => vis(t) && !t.readOnly && !t.disabled && t.getBoundingClientRect().height > 5);
+        if (!ta) return null;
+        ta.focus();
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, txt); ta.dispatchEvent(new Event('input', {bubbles: true})); ta.dispatchEvent(new Event('change', {bubbles: true}));
+        const r = ta.getBoundingClientRect(); return {x: r.x + r.width, y: r.y + r.height / 2, len: ta.value.length}; }""", text)
+    if not put:
         return False, "入力欄なし"
-    box.click()
-    box.fill(text)
     chat.wait_for_timeout(800)
-    how = chat.evaluate("""() => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
+    how = chat.evaluate("""(pos) => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
         const btns = Array.from(document.querySelectorAll('button, [role=button], input[type=submit]')).filter(vis);
         let e = btns.find(b => /送信|send/i.test((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.value || '')));
-        if (!e) { const ta = document.querySelector('textarea'); const box = ta && (ta.closest('form') || ta.parentElement && ta.parentElement.parentElement);
-                  if (box) { const c = Array.from(box.querySelectorAll('button, [role=button]')).filter(vis); e = c[c.length - 1]; } }
-        if (!e) return null; e.click(); return (e.innerText || e.getAttribute('aria-label') || e.title || 'button').slice(0, 20); }""")
+        if (!e) { const near = btns.map(b => { const r = b.getBoundingClientRect(); return {b, dy: Math.abs(r.y + r.height / 2 - pos.y), dx: r.x - pos.x}; })
+                    .filter(o => o.dy < 30 && o.dx > -10 && o.dx < 200).sort((a, b) => a.dx - b.dx); e = near.length ? near[0].b : null; }
+        if (!e) return null; e.click(); return ((e.innerText || e.getAttribute('aria-label') || e.title || '').trim() || 'icon') + '@' + Math.round(e.getBoundingClientRect().x); }""", put)
     if not how:
-        box.press("Enter")
-        how = "Enter"
+        return False, "送信ボタンなし"
     chat.wait_for_timeout(4000)
     msgs = chat.evaluate(MSGS_JS)
     head = re.sub(r"\s+", " ", text)[:20]
@@ -292,29 +296,9 @@ def send_in_thread(chat, text):
     return sent, how
 
 
-def probe_thread(shopdir, name):
-    """スレッドを開いて、入力欄とボタンの作りだけを出す（本文・名前は出さない）。送信の段が合わない時の調べ（2026-10-23）。"""
-    opened = open_chat(shopdir)
-    if not opened:
-        return False
-    p, b, chat = opened
-    try:
-        rows = chat.evaluate(ROWS_JS)
-        row = next((t for t in rows if t.split(" ")[0] == name), None)
-        if not row:
-            log("送り先のスレッドが見つかりません"); return False
-        chat.evaluate("""(t) => { const vis = e => !!(e.offsetWidth || e.offsetHeight); const head = t.slice(0, 40);
-            const els = Array.from(document.querySelectorAll('div, li, a')).filter(e => vis(e) && (e.innerText || '').trim().replace(/\s+/g, ' ').startsWith(head));
-            const e = els.sort((a, b) => a.innerText.length - b.innerText.length)[0]; if (e) { e.scrollIntoView({block: 'center'}); e.click(); } }""", row)
-        chat.wait_for_timeout(3500)
-        info = chat.evaluate("""() => { const vis = e => !!(e.offsetWidth || e.offsetHeight); const r = e => { const b = e.getBoundingClientRect(); return Math.round(b.x) + ',' + Math.round(b.y) + ' ' + Math.round(b.width) + 'x' + Math.round(b.height); };
-            return {url: location.href.replace(/id=\d+/, 'id=…'), size: innerWidth + 'x' + innerHeight,
-              inputs: Array.from(document.querySelectorAll('input, textarea, [contenteditable=true]')).map(e => ({tag: e.tagName, type: e.type || '', ph: (e.placeholder || '').slice(0, 20), vis: vis(e), ro: !!e.readOnly, dis: !!e.disabled, at: r(e), cls: (e.className || '').toString().slice(0, 50)})),
-              buttons: Array.from(document.querySelectorAll('button, [role=button], input[type=submit]')).filter(vis).map(e => ({t: (e.innerText || e.value || e.getAttribute('aria-label') || '').trim().slice(0, 12), at: r(e), svg: !!e.querySelector('svg, img')})).slice(0, 40)}; }""")
-        log("スレッドの作り:", json.dumps(info, ensure_ascii=False))
-        return True
-    finally:
-        b.close(); p.stop()
+def send_in_thread(chat, text):
+    """いま開いているスレッドに1通送り、画面に出たかで確かめる。返す: (送れたか, 押したもの)"""
+    return _type_and_send(chat, text)
 
 
 def send_one(shopdir, name, text):
@@ -334,26 +318,7 @@ def send_one(shopdir, name, text):
             const els = Array.from(document.querySelectorAll('div, li, a')).filter(e => vis(e) && (e.innerText || '').trim().replace(/\\s+/g, ' ').startsWith(head));
             const e = els.sort((a, b) => a.innerText.length - b.innerText.length)[0]; if (e) { e.scrollIntoView({block: 'center'}); e.click(); } }""", row)
         chat.wait_for_timeout(3000)
-        box = chat.locator("textarea, [contenteditable=true]").last
-        if not box.count():
-            log(f"{label}: 入力欄が見つかりません")
-            return False
-        box.click()
-        box.fill(text)
-        chat.wait_for_timeout(800)
-        how = chat.evaluate("""() => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
-            const btns = Array.from(document.querySelectorAll('button, [role=button], input[type=submit]')).filter(vis);
-            let e = btns.find(b => /送信|send/i.test((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.value || '')));
-            if (!e) { const ta = document.querySelector('textarea'); const box = ta && (ta.closest('form') || ta.parentElement && ta.parentElement.parentElement);
-                      if (box) { const c = Array.from(box.querySelectorAll('button, [role=button]')).filter(vis); e = c[c.length - 1]; } }
-            if (!e) return null; e.click(); return (e.innerText || e.getAttribute('aria-label') || e.title || 'button').slice(0, 20); }""")
-        if not how:
-            box.press("Enter")
-            how = "Enter"
-        chat.wait_for_timeout(4000)
-        msgs = chat.evaluate(MSGS_JS)
-        head = re.sub(r"\s+", " ", text)[:20]
-        sent = any(head in re.sub(r"\s+", " ", m["t"]) and m["x"] > 800 for m in msgs)
+        sent, how = _type_and_send(chat, text)
         log(f"{label}: 送信 {'OK' if sent else 'NG（画面に出ていない）'}（押したもの: {how}）")
         try:
             chat.click("text=会話リスト", timeout=3000)
