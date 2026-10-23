@@ -182,7 +182,9 @@ def handle_ai(x, cli):
         if y.get("is_answer") and y.get("complete") and x["shopdir"] in YOASOBI_SHOPS and sent:
             inputs = {"shop": x["shopdir"], "gid": str(x["gid"]), "name": ai_reply.yobi(x["name"]),
                       "en": str(y.get("lang_en") or "0"), "zh": str(y.get("lang_zh") or "0"), "kr": str(y.get("lang_kr") or "0"),
-                      "ng": "・".join(str(w) for w in (y.get("ng") or []))[:200], "photo": str(y.get("photo") or "unknown")}
+                      "ng": "・".join(str(w) for w in (y.get("ng") or []))[:200], "photo": str(y.get("photo") or "unknown"),
+                      "qa": json.dumps({k: v for k, v in (y.get("qa") or {}).items() if v}, ensure_ascii=False)[:1500],
+                      "courses": ("3p_ok" if y.get("three_p") == "ok" else ("3p_ng" if y.get("three_p") == "ng" else "")) + (",all_ok" if y.get("all_options_ok") else "")}
             ok, msg = cast_mypage.dispatch(workflow="yoasobi-setup.yml", inputs=inputs)
             print(f'{x["shop"]}: 夜遊びの設定を起動 {"OK" if ok else "✗ " + msg}')
             x["yoasobi_setup"] = ok
