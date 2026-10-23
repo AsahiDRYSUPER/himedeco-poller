@@ -18,6 +18,10 @@ on:
         description: "1通だけ送る時：本文（日本語。夜遊び側が翻訳）"
         type: string
         default: ""
+      probe_name:
+        description: "スレッドの作りを調べる時：相手のスレッド名（送らない）"
+        type: string
+        default: ""
   repository_dispatch:
     types: [yoasobi-chat]
   # 定期は collect.yml の見張りの中（collect_loop.py、2回に1回＝10分ごと）で回す。ここは手動と repository_dispatch だけ（cronは当てにならないので外した。2026-10-22）
@@ -53,6 +57,7 @@ jobs:
           YOASOBI_STATE: yoasobi_state.json
           YOASOBI_SEND_NAME: ${{ inputs.send_name || '' }}
           YOASOBI_SEND_TEXT: ${{ inputs.send_text || '' }}
+          YOASOBI_PROBE_NAME: ${{ inputs.probe_name || '' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AI_REPLY: ${{ vars.AI_REPLY }}
           AI_MODEL: ${{ vars.AI_MODEL }}
