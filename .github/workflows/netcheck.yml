@@ -1,0 +1,71 @@
+name: netcheck
+
+# クラウド（GitHubの実行機）から CTI と 新着ん に届くかを見るだけ（書き込みなし・名前なし・鍵は伏せ字）。2026-10-23 即ヒメ直し・新着んが止まった時の切り分け用。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests playwright > /dev/null && python3 -m playwright install --with-deps chromium > /dev/null 2>&1 || python3 -m playwright install chromium > /dev/null
+      - name: 届くか（状態コードと秒数だけ）
+        env:
+          CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
+          SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
+          SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import os, time, requests, re
+          from urllib.parse import urlsplit
+          try:
+              r = requests.get("https://ipinfo.io/json", timeout=10).json(); print("実行機の場所:", r.get("country"), r.get("region"), r.get("org"))
+          except Exception as e: print("場所: 読めない", type(e).__name__)
+          def hit(label, url, **kw):
+              t0 = time.time()
+              try:
+                  r = requests.get(url, timeout=25, allow_redirects=False, headers={"User-Agent": "Mozilla/5.0"}, **kw)
+                  print(f"{label}: HTTP {r.status_code} {time.time()-t0:.1f}s server={r.headers.get('server','-')} len={len(r.content)}")
+              except Exception as e:
+                  print(f"{label}: 届かない {type(e).__name__} {time.time()-t0:.1f}s")
+          cti = os.environ.get("CTI_LOGIN_URL", "")
+          if cti:
+              host = urlsplit(cti).netloc
+              hit("CTI ログインURL", cti)
+              hit("CTI トップ", f"https://{host}/")
+          else:
+              print("CTI: 鍵なし")
+          hit("新着ん index.php", "https://si9.jp/index.php")
+          hit("ヘブン 表ページ（比較用）", "https://www.cityheaven.net/okayama/?lo=1")
+          # 新着んにログインして、着いた画面の種類だけ見る（URLのパス・題名・jQueryの有無）
+          uid, pw = os.environ.get("SINCHAKUN_ID", "").strip(), os.environ.get("SINCHAKUN_PASSWORD", "").strip()
+          if uid and pw:
+              from playwright.sync_api import sync_playwright
+              with sync_playwright() as p:
+                  b = p.chromium.launch(); pg = b.new_page()
+                  try:
+                      pg.goto("https://si9.jp/index.php", wait_until="domcontentloaded", timeout=60000)
+                      print("新着ん ログイン前:", urlsplit(pg.url).path, "|", pg.title()[:40], "| 入力欄:", bool(pg.query_selector("input[name=login_id]")))
+                      pg.fill("input[name=login_id]", uid); pg.fill("input[name=login_password]", pw)
+                      pg.click("#loginform button[type=submit]"); pg.wait_for_load_state("domcontentloaded"); pg.wait_for_timeout(3000)
+                      print("新着ん ログイン後:", urlsplit(pg.url).path, "|", pg.title()[:40], "| まだログイン欄:", bool(pg.query_selector("input[name=login_password]")), "| jQuery:", pg.evaluate("() => typeof window.jQuery"))
+                      body = pg.evaluate("() => document.body.innerText.slice(0, 400)")
+                      print("新着ん ログイン後の文（頭だけ・数字と記号は伏せる）:", re.sub(r"[0-9０-９]", "#", body).replace("\n", " / ")[:300])
+                      pg.goto("https://si9.jp/schedule/list.php", wait_until="domcontentloaded", timeout=60000); pg.wait_for_timeout(2000)
+                      print("新着ん スケジュール:", urlsplit(pg.url).path, "|", pg.title()[:40], "| max_row:", bool(pg.query_selector("select[name=max_row]")), "| jQuery:", pg.evaluate("() => typeof window.jQuery"))
+                  except Exception as e:
+                      print("新着ん ブラウザ: 失敗", type(e).__name__, str(e)[:120])
+                  finally:
+                      b.close()
+          else:
+              print("新着ん: 鍵なし")
+          PY
