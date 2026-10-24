@@ -2,15 +2,16 @@ name: jp-sokuhime
 
 # 日本のIPで動く実行機（self-hosted, jp）で、即ヒメ直しと新着んの並び替えを回す。
 # 2026-10-23 GitHubのクラウド（米国）からは CTI が接続拒否・新着んがログインで403になったため、この2つだけ日本側で動かす。
-# 営業時間（JST 9:00〜翌2:50）に10分ごと。やることは今までの board-collect の中と同じ（即ヒメの時間付け・新着んの並び替え）。
-
-# 2026-10-23 GitHub の定期実行（schedule）はこのアカウントでは4〜5時間に1回しか動かないと分かった。実際の起動は Mac の起動係（~/jp-dispatch/dispatch.sh、launchd で10分ごと・毎時、gh workflow run）が送る。下の schedule は予備。
+# 2026-10-24 一希さん「即ヒメの時間付けは10分間隔だと遅い。出勤が多い時間帯はもっと頻繁に」→
+#   1回の実行の中で即ヒメ直しをくり返す（sokuhime_loop.py。忙しい時間帯は3分ごと・ふだんは5分ごと。sokuhime_pace.json で変えられる）。
+#   新着んは横で1回だけ（10分あける決まりは si9_sort.py の中）。実行は約9分で終わり、最後に自分で次の実行を起動する（営業時間のうち）。
+# GitHub の定期実行（schedule）はこのアカウントでは4〜5時間に1回しか動かない。Mac の起動係（~/jp-dispatch/dispatch.sh、10分ごと）は鎖が切れた時の予備。下の schedule も予備。
 
 on:
   workflow_dispatch:
     inputs:
       dry:
-        description: "見るだけ（即ヒメは --dry、新着んは案を作るだけ）"
+        description: "見るだけ（即ヒメは --dry、新着んは案を作るだけ。次の実行は起動しない）"
         type: boolean
         default: false
   schedule:
@@ -18,6 +19,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: jp-sokuhime
@@ -35,33 +37,37 @@ jobs:
       - uses: actions/checkout@v4
       - name: 道具がそろっているか
         run: $PY -c "import playwright, requests, bs4, cryptography; print('ok')"
-      - name: 即ヒメ直し（CTIを読んでヘブンの箱を直す）
+      - name: 即ヒメ直し（くり返し）と新着んの並び替え（横で1回）
         env:
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
-          CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
-          CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
-          CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
-          TODO_KEY: ${{ secrets.TODO_KEY }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          CASTS_MAP: ${{ secrets.CASTS_MAP }}
-          NO_AUTO_IDS: ${{ secrets.NO_AUTO_IDS }}
-        run: |
-          mkdir -p out
-          if [ "${{ inputs.dry }}" = "true" ]; then $PY sokuhime_fix.py --dry; else $PY sokuhime_fix.py; fi
-      - name: 新着んの並び替え（main の si9_mode.json に従う）
-        if: always()
-        env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
           CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
           CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
           SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
           SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
           TODO_KEY: ${{ secrets.TODO_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          CASTS_MAP: ${{ secrets.CASTS_MAP }}
+          NO_AUTO_IDS: ${{ secrets.NO_AUTO_IDS }}
+          SOKUHIME_DRY: ${{ inputs.dry && '1' || '' }}
           SI9_SORT_MODE: ${{ inputs.dry && 'dry' || '' }}
           GH_TOKEN: ${{ github.token }}
-        run: $PY si9_sort.py
+        run: |
+          mkdir -p out
+          $PY sokuhime_loop.py
       - name: 記録を公開（data ブランチ）
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash publish_data.sh
+      - name: 次の実行を起動する（営業時間 JST 9:00〜翌2:50 のうち）
+        if: always() && !inputs.dry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          H=$(TZ=Asia/Tokyo date +%H); H=${H#0}; H=${H:-0}
+          if [ "$H" -ge 9 ] || [ "$H" -le 2 ]; then
+            gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" || true
+          else
+            echo "営業時間外なので次は起動しない（朝は起動係が始める）"
+          fi
