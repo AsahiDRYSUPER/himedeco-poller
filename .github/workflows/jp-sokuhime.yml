@@ -67,7 +67,8 @@ jobs:
         run: |
           H=$(TZ=Asia/Tokyo date +%H); H=${H#0}; H=${H:-0}
           if [ "$H" -ge 9 ] || [ "$H" -le 2 ]; then
-            gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" || true
+            # 実行機（launchd の常駐）の PATH には ~/bin が入っていないので、gh は置き場所を直接書く（2026-10-24 黙って失敗していた）
+            /Users/yamazakikazuki/bin/gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" && echo "次の実行を起動した" || echo "次の実行を起動できなかった（起動係が10分以内に始める）"
           else
             echo "営業時間外なので次は起動しない（朝は起動係が始める）"
           fi
