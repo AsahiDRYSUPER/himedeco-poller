@@ -42,6 +42,8 @@ LABELS = {"cg_kirakira": "キラ学", "s_matikado": "街角", "mrs_orange": "オ
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
 AUTO = os.environ.get("AUTO_YOASOBI", "off").strip().lower() in ("on", "1", "true", "yes")
+HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じスレッドに送る間隔（分）
+HOLD_TEXT = os.environ.get("YOASOBI_HOLD_TEXT", "").strip() or "メッセージありがとうございます。担当スタッフが確認して、すぐにご連絡いたします。少々お待ちください。"
 RENOTIFY_MIN = int(os.environ.get("YOASOBI_RENOTIFY_MIN", "180"))   # 同じ未返信を、何分たったらもう一度知らせるか
 LOOKBACK_DAYS = 3                                                    # 何日前までの未返信を見るか（古いものは返さない。一希さん 10/19）
 
@@ -368,8 +370,25 @@ def watch_shop(shopdir, st, now):
                     except Exception as e:
                         sent, how = False, type(e).__name__
                     log(f"{label}: AIの返事を送信 {'OK' if sent else 'NG'}（{how}）")
+                # 判断が要る（B・C）でも、お客さんを待たせない：まず「確認してすぐご連絡します」を返し、中身は受付へ（2026-10-24 一希さん「返信が遅すぎ」。
+                # Zergerさん「車の色とナンバー」「いつ着く」に1時間返事が無かった）。同じスレッドには HOLD_MIN 分に1回まで
+                held = False
+                if not sent and AUTO and cat in ("B", "C") and data.get("action") != "none":
+                    hk = "hold:" + tkey(shopdir, r["name"], "")
+                    last_hold = st["seen"].get(hk)
+                    if not last_hold or datetime.fromisoformat(last_hold) < now - timedelta(minutes=HOLD_MIN):
+                        try:
+                            held, how = send_in_thread(chat, HOLD_TEXT)
+                        except Exception as e:
+                            held, how = False, type(e).__name__
+                        log(f"{label}: 「確認してご連絡します」を送信 {'OK' if held else 'NG'}（{how}）")
+                        if held:
+                            st["seen"][hk] = now.isoformat()
                 if sent:
                     title, body = f"🤖 夜遊び {label} AIが返しました {cat}", body + f"\n\n→ 送った返事：\n{reply}"
+                elif held:
+                    title = f"⏰ 夜遊び {label} 受付の返事が要る {cat}（お客さんには「確認してすぐご連絡します」を送った）"
+                    body += f"\n\n→ 返す内容の案：\n{reply or '（無し）'}"
                 elif data.get("action") == "none" and not reply:
                     title, body = f"🌏 夜遊び {label} 返事は不要 {cat}", body + f"\n\n→ {data.get('reason') or ''}"
                 else:
