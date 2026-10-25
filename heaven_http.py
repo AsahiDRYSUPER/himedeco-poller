@@ -10,7 +10,7 @@ CityHeaven管理画面(ヘブンマネージャー)を、ブラウザを使わ�
     という状態自体が起きない。ブラウザも不要。
 
 仕組み(2026-09-19に実機で確認):
-    ・ログイン: C1Login.php に txt_account / txt_password をPOSTするだけ(CSRF・画像認証なし)
+    ・ログイン: C1Login.php に txt_account / txt_password をPOST
     ・店舗選択: C1GroupLogin.php?commuId=<店舗ID>&login=1 をGET
     ・口コミ返信: C8ReviewDetail.php?review_id=..&shopdir=.. をGETして「編集中の口コミ」を
       サーバー側セッションに記憶させ、続けて同じセッションでC8ReviewDetail.php?shopdir=..
@@ -27,15 +27,13 @@ from bs4 import BeautifulSoup
 
 BASE = "https://newmanager.cityheaven.net"
 
-COMMU_IDS = {
-    "cg_kirakira": "1800000524",
-    "s_matikado": "1810000550",
-    "mrs_orange": "1810054632",
-    "venus_okayama": "1810020233",
-    "potya_reen": "1810001943",
-    "torori_angel": "1810023303",
-    "undercover": "3649",
-}
+import json
+import os
+
+import secret_box
+
+# 店舗ID（管理画面の commuId）は鍵つき（sealed/heaven_ids.enc）。鍵が無い時は環境変数 COMMU_IDS（JSON）。2026-10-25
+COMMU_IDS = (secret_box.data("heaven_ids") or {}).get("commu") or json.loads(os.environ.get("COMMU_IDS") or "{}")
 
 DETAIL_HEADINGS = [
     "投稿日", "訪問日", "投稿者", "タイトル", "評価点", "料金の総額", "お店の利用回数",

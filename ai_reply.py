@@ -3,7 +3,7 @@
 なぜ: 決まった言葉に決まった文を返すルールだけでは、意味の取れない連絡に「確認して連絡します」としか返せず、
       会話が止まっていた（一希さん「意味が分からなければ聞き返して会話の中で確認して」「PCを閉じていても自動で返して」）。
 どう動くか: watch_chat.py が「質問・その他・外国人（YOASOBI）の話」と判断した連絡だけを渡す。
-      直近のやりとりと決まり（ai_knowledge.md＋非公開メモ AI_PRIVATE_NOTES）を Claude に渡し、
+      直近のやりとりと決まり（鍵つきの指示書 sealed/ai_knowledge.enc＋非公開メモ AI_PRIVATE_NOTES）を Claude に渡し、
       返事の文・送るかどうか・一希さんに知らせることを JSON で受け取る。
 鍵:   Secret ANTHROPIC_API_KEY（一希さんが Claude Console で作って貼る。無ければ何もしない＝今まで通り）。
 止め方: リポジトリの変数 AI_REPLY を off。モデルは変数 AI_MODEL（既定 claude-opus-5-5）、考える深さは AI_EFFORT（既定 low）。
@@ -15,10 +15,12 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import secret_box
+
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
 LEARNED_FILE = OUT_DIR / "ai_learned.json"
-KNOWLEDGE_FILE = Path(__file__).with_name("ai_knowledge.md")
+# 指示書は鍵つき（sealed/*.enc、鍵は金庫の KNOWLEDGE_KEY）。開けない時は AI を使わない（2026-10-25）
 PUBLIC_RAW = "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/data"
 
 MODEL = (os.environ.get("AI_MODEL") or "").strip() or "claude-opus-5-5"
@@ -86,6 +88,9 @@ def enabled():
         return False
     if (os.environ.get("AI_REPLY") or "on").strip().lower() in ("off", "0", "false", "no"):
         return False
+    if not secret_box.text("ai_knowledge"):
+        _state["last_error"] = "指示書（鍵つき）が開けない。金庫の KNOWLEDGE_KEY を確かめる"
+        return False
     return bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip())
 
 
@@ -132,7 +137,7 @@ def save_learned(note, name):
 
 
 def system_prompt():
-    know = KNOWLEDGE_FILE.read_text(encoding="utf-8") if KNOWLEDGE_FILE.exists() else ""
+    know = secret_box.text("ai_knowledge") or ""
     private = (os.environ.get("AI_PRIVATE_NOTES") or "").strip()
     learned = load_learned()[:30]
     parts = [know, OUTPUT_RULES]
@@ -164,6 +169,8 @@ def ask(shop_label, shopdir, name, history, latest):
     """Claude に聞いて、決まった形の dict を返す。使えない・断られた・壊れた時は None（理由は文字で返す）。"""
     if not enabled():
         return None, "off"
+    if not secret_box.text("yoasobi_knowledge"):
+        return None, "no_knowledge"
     if _state["calls"] >= MAX_PER_RUN:
         return None, "cap"
     _state["calls"] += 1
@@ -228,7 +235,6 @@ def _call(system, user, schema):
 
 
 # ---- お客さん（夜遊びヘブンの多言語チャット）向け。2026-10-23 一希さん「送られた時だけ通知が入って、それにAIが反応する」 ----
-CUSTOMER_FILE = Path(__file__).with_name("yoasobi_knowledge.md")
 CUSTOMER_SCHEMA = {
     "type": "object",
     "properties": {
@@ -252,7 +258,7 @@ CUSTOMER_RULES = """
 
 
 def customer_prompt():
-    know = CUSTOMER_FILE.read_text(encoding="utf-8") if CUSTOMER_FILE.exists() else ""
+    know = secret_box.text("yoasobi_knowledge") or ""
     return know + "\n\n" + CUSTOMER_RULES
 
 
@@ -260,6 +266,8 @@ def ask_customer(shop_label, name, history, latest, schedule=""):
     """夜遊びヘブンのお客さんの発言にどう返すかを Claude に聞く。返す: (dict, 理由)。女の子向けの非公開メモは渡さない。"""
     if not enabled():
         return None, "off"
+    if not secret_box.text("yoasobi_knowledge"):
+        return None, "no_knowledge"
     if _state["calls"] >= MAX_PER_RUN:
         return None, "cap"
     _state["calls"] += 1
@@ -305,6 +313,8 @@ def selfcheck():
     """鍵とモデルが通るかを、作り話のやりとりで1回だけ試す。誰にも送らない。
     公開リポジトリなので、ログには結果の種類・長さ・数だけ出す（返事の中身・メモの中身は出さない）。"""
     print("AI: 鍵", "あり" if (os.environ.get("ANTHROPIC_API_KEY") or "").strip() else "なし",
+          "/ 指示書（鍵つき）", "あり" if secret_box.text("ai_knowledge") else "なし",
+          "/ お客さん用の指示書", "あり" if secret_box.text("yoasobi_knowledge") else "なし",
           "/ 非公開メモ", "あり" if (os.environ.get("AI_PRIVATE_NOTES") or "").strip() else "なし",
           "/ モデル", MODEL, "/ 深さ", EFFORT)
     k = os.environ.get("ANTHROPIC_API_KEY") or ""
@@ -317,7 +327,7 @@ def selfcheck():
     except Exception:
         pass
     if not enabled():
-        print("AI: ❌ 動かない（鍵が無いか、AI_REPLY=off）")
+        print("AI: ❌ 動かない（鍵が無いか、AI_REPLY=off か、指示書が開けない）", _state["last_error"] or "")
         return 1
     data, why = ask("キラキラ学園", "cg_kirakira", "テストさん",
                     "[10/23 10:00 店] 外国人のお客さんもOKにしてみない？",

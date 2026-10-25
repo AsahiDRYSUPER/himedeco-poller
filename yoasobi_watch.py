@@ -27,6 +27,7 @@ from pathlib import Path
 import requests
 
 import ai_reply      # お客さんへの返事を Claude で考える（2026-10-23）
+import secret_box    # 鍵つきの定型文（2026-10-25）
 
 from heaven_http import BASE, HeavenClient, load_credentials
 
@@ -104,27 +105,13 @@ def avail_text(shopdir):
 
 
 HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じスレッドに送る間隔（分）
-HOLD_TEXT = os.environ.get("YOASOBI_HOLD_TEXT", "").strip() or "メッセージありがとうございます。担当スタッフが確認して、すぐにご連絡いたします。少々お待ちください。"
+_TX = secret_box.data("yoasobi_templates") or {}   # 定型文と分け方の言葉は鍵つき（sealed/yoasobi_templates.enc）。鍵が無ければ定型は使わず、AIか受付へ（2026-10-25）
+HOLD_TEXT = os.environ.get("YOASOBI_HOLD_TEXT", "").strip() or _TX.get("hold_text") or "メッセージありがとうございます。担当スタッフが確認して、すぐにご連絡いたします。少々お待ちください。"
 RENOTIFY_MIN = int(os.environ.get("YOASOBI_RENOTIFY_MIN", "180"))   # 同じ未返信を、何分たったらもう一度知らせるか
 LOOKBACK_DAYS = 3                                                    # 何日前までの未返信を見るか（古いものは返さない。一希さん 10/19）
-
-# 分け方の言葉（お客さんの発言に含まれていたら）
-B_WORDS = ("予約", "book", "reserv", "指名", "available", "出勤", "working", "明日", "今日", "tonight", "tomorrow",
-           "割引", "discount", "cheaper", "安く", "値引", "負け", "まけて", "高い", "expensive", "不公平", "unfair", "deal",
-           "no way", "can't", "cannot", "できない", "無理", "延長", "キャンセル", "cancel", "変更", "change", "時から",
-           ":00", ":30", "来られ", "来れ", "行ける", "いける", "可以", "預約", "预约", "예약", "180", "分で", "min for")
-A_WORDS = ("ホテル", "hotel", "東横", "apa", "アパ", "ダイワ", "ロイネット", "提携", "エリア", "area", "倉敷", "部屋", "room",
-           "フロント", "支払", "現金", "cash", "クレジット", "credit", "card", "料金", "price", "いくら", "how much", "営業",
-           "何時まで", "飯店", "酒店", "호텔", "房間", "房间", "付款", "현금")
-TEMPLATES = {
-    "hotel_ng": "申し訳ございません。◯◯はご派遣できないホテルです。",
-    "hotel_ok": "◯◯はご派遣可能です！女の子ご到着の際にお出迎えをお願いしているホテルになります。",
-    "biz_hotel": "ビジネスホテルは、事前にチェックインを済ませてお部屋番号をご連絡ください。",
-    "door": "女の子が到着したらフロントへ電話をして扉を開けてあげてください。",
-    "area": "遠方エリアになるので難しいです。岡山市内のラブホテル・ビジネスホテルでしたら大丈夫です。",
-    "price": "外国籍のお客様はどなたもこの料金でご案内しております。60分30,000円／90分45,000円／120分60,000円です。",
-    "pay": "お支払いは当日、女の子に現金（日本円）でお願いいたします。",
-}
+B_WORDS = tuple(_TX.get("b_words") or ())
+A_WORDS = tuple(_TX.get("a_words") or ())
+TEMPLATES = dict(_TX.get("templates") or {})
 
 
 def log(*a):
@@ -182,15 +169,15 @@ def suggest(text):
     t = (text or "").lower()
     out = []
     if any(w in t for w in ("倉敷", "遠方", "市外", "アパート", "自宅", "apartment", "my house", "my home")):
-        out.append(TEMPLATES["area"])
+        out.append(TEMPLATES.get("area", ""))
     if any(w in t for w in ("フロント", "扉", "door", "開けて", "入室", "let you in", "let her in")):
-        out.append(TEMPLATES["door"])
+        out.append(TEMPLATES.get("door", ""))
     if any(w in t for w in ("料金", "price", "いくら", "how much", "cost", "fee", "charge", "多少钱", "多少錢", "얼마")):
-        out.append(TEMPLATES["price"])
+        out.append(TEMPLATES.get("price", ""))
     if any(w in t for w in ("支払", "現金", "cash", "credit card", "クレジット", "pay by", "how to pay", "payment", "支付", "付款", "결제")):
-        out.append(TEMPLATES["pay"])
+        out.append(TEMPLATES.get("pay", ""))
     if any(w in t for w in ("ホテル", "hotel", "飯店", "酒店", "호텔")) and not out:
-        out.append("（ホテル名を見て）" + TEMPLATES["hotel_ok"] + "／" + TEMPLATES["hotel_ng"])
+        out.append("（ホテル名を見て）" + TEMPLATES.get("hotel_ok", "") + "／" + TEMPLATES.get("hotel_ng", ""))
     return out
 
 
@@ -417,7 +404,7 @@ def watch_shop(shopdir, st, now):
             latest = text or r["preview"]
             age = int((now - r["at"]).total_seconds() // 60)
             body = f"{r['name']}（{age}分前）\n{latest[:400]}"
-            # まず Claude に聞く（決まり＝yoasobi_knowledge.md）。A で決まりの中なら、AUTO_YOASOBI=on の時だけそのまま送る。
+            # まず Claude に聞く（決まり＝鍵つきの指示書）。A で決まりの中なら、AUTO_YOASOBI=on の時だけそのまま送る。
             # それ以外は下書きを付けて知らせる。Claude が使えない時は今まで通りの仕分けだけ（2026-10-23）
             data, why = (ai_reply.ask_customer(label, r["name"], hist, latest, avail_text(shopdir)) if ai_reply.enabled() else (None, "off"))
             if data and data.get("reply"):
@@ -434,7 +421,7 @@ def watch_shop(shopdir, st, now):
                         sent, how = False, type(e).__name__
                     log(f"{label}: AIの返事を送信 {'OK' if sent else 'NG'}（{how}）")
                 # 判断が要る（B・C）でも、お客さんを待たせない：まず「確認してすぐご連絡します」を返し、中身は受付へ（2026-10-24 一希さん「返信が遅すぎ」。
-                # Zergerさん「車の色とナンバー」「いつ着く」に1時間返事が無かった）。同じスレッドには HOLD_MIN 分に1回まで
+                # あるお客さん「車の色とナンバー」「いつ着く」に1時間返事が無かった）。同じスレッドには HOLD_MIN 分に1回まで
                 held = False
                 if not sent and AUTO and cat in ("B", "C") and data.get("action") != "none":
                     hk = "hold:" + tkey(shopdir, r["name"], "")

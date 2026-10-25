@@ -1,4 +1,4 @@
-"""共有ボード(千田さんと卍さん用)のデータを、5分ごとに集める: 店ごとの出勤人数・目標・不足、次の出勤日、今日声をかける子(暗号化)。
+"""共有ボード（店長・スタッフ用）のデータを、5分ごとに集める: 店ごとの出勤人数・目標・不足、次の出勤日、今日声をかける子(暗号化)。
 公開リポジトリ(Actions無料)で動かす。名前など個人の情報は、暗号化した形でしか書き出さない。ログにも名前は出さない。"""
 import base64
 import hashlib
@@ -19,7 +19,11 @@ JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 PUBLIC_RAW = os.environ.get("PUBLIC_RAW", "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/data")
-CONFIG = json.loads(Path("shops_config.json").read_text(encoding="utf-8"))
+import secret_box
+
+_PUB = json.loads(Path("shops_config.json").read_text(encoding="utf-8"))   # 公開：店の表示名と祝日だけ
+CONFIG = secret_box.data("shops_config") or _PUB                              # 鍵つき：目標人数・ライバル店など（鍵が無ければ公開ぶんだけ）2026-10-25
+RIVALS = tuple(CONFIG.get("rivals") or ())
 HOLIDAYS = set(CONFIG.get("holidays", []))
 WEEK = "月火水木金土日"
 ATT_EXTRA = {}
@@ -200,7 +204,7 @@ def rankings():
                 continue
             title = n.get_text(strip=True)
             ours = next((k for w, k in RANK_KEYS.items() if w in title), None)
-            items.append({"rank": i, "name": title, "ours": ours, "rival": "COCKTAIL" in title})
+            items.append({"rank": i, "name": title, "ours": ours, "rival": any(r in title for r in RIVALS)})
         text = soup.get_text()
         period = re.search(r"\((\d+/\d+～\d+/\d+)\s*集計\)", text)
         total = re.search(r"／\s*全\s*(\d+)\s*件", text.replace("\n", ""))
@@ -378,7 +382,7 @@ def main():
     load_past(now)  # 今月の過ぎた日の出勤(がんばりカレンダー用)
     shops = []
     for shopdir, cfg in CONFIG["shops"].items():
-        row = {"key": shopdir, "label": cfg["label"], "target": cfg["target"], "attendance": {}, "no_next": None, "error": ""}
+        row = {"key": shopdir, "label": cfg["label"], "target": cfg.get("target"), "attendance": {}, "no_next": None, "error": ""}
         try:
             row["attendance"] = attendance(shopdir, days)
             row["no_next"] = ATT_EXTRA.get(shopdir)

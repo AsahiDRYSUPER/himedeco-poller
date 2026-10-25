@@ -37,6 +37,8 @@ jobs:
   watch:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    env:
+      KNOWLEDGE_KEY: ${{ secrets.KNOWLEDGE_KEY }}   # 鍵つきの指示書・定型文・店の設定を開く（2026-10-25）
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

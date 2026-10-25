@@ -30,6 +30,7 @@ jobs:
     runs-on: [self-hosted, jp]
     timeout-minutes: 20
     env:
+      KNOWLEDGE_KEY: ${{ secrets.KNOWLEDGE_KEY }}   # 鍵つきの指示書・定型文・店の設定を開く（2026-10-25）
       PY: /Users/yamazakikazuki/jp-venv/bin/python
       LANG: ja_JP.UTF-8
       PYTHONUTF8: "1"
