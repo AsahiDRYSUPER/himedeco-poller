@@ -55,9 +55,6 @@ jobs:
           YOASOBI_SHOPS: ${{ inputs.shops || 'cg_kirakira' }}
           AUTO_YOASOBI: ${{ vars.AUTO_YOASOBI || 'off' }}
           YOASOBI_STATE: yoasobi_state.json
-          YOASOBI_SEND_NAME: ${{ inputs.send_name || '' }}
-          YOASOBI_SEND_TEXT: ${{ inputs.send_text || '' }}
-          YOASOBI_PROBE_NAME: ${{ inputs.probe_name || '' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AI_REPLY: ${{ vars.AI_REPLY }}
           AI_MODEL: ${{ vars.AI_MODEL }}

@@ -24,7 +24,7 @@ jobs:
           SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
           SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
         run: |
-          python3 - <<'PY'
+          bash quiet.sh netcheck python3 - <<'PY'
           import os, time, requests, re
           from urllib.parse import urlsplit
           try:

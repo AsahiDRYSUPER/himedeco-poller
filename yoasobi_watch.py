@@ -34,8 +34,20 @@ JST = timezone(timedelta(hours=9))
 STATE = Path(os.environ.get("YOASOBI_STATE", "out/yoasobi_state.json"))
 STATE.parent.mkdir(parents=True, exist_ok=True)
 PUBLIC_RAW = "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller"
-SEND_NAME = os.environ.get("YOASOBI_SEND_NAME", "").strip()     # 1通だけ送る時：相手のスレッド名（会話リストの名前）
-SEND_TEXT = os.environ.get("YOASOBI_SEND_TEXT", "").strip()
+def _manual_input(key, env):
+    """手で起動した時の入力。env に書くと作業記録の頭に出るので、イベントのファイル（ログに出ない）から読む。"""
+    v = os.environ.get(env, "").strip()
+    if v:
+        return v
+    try:
+        ev = json.loads(Path(os.environ.get("GITHUB_EVENT_PATH", "")).read_text(encoding="utf-8"))
+        return str((ev.get("inputs") or {}).get(key) or "").strip()
+    except Exception:
+        return ""
+
+
+SEND_NAME = _manual_input("send_name", "YOASOBI_SEND_NAME")     # 1通だけ送る時：相手のスレッド名（会話リストの名前）
+SEND_TEXT = _manual_input("send_text", "YOASOBI_SEND_TEXT")
 MNG = "https://mng.yoasobi-heaven.com"
 SHOPS = [s for s in os.environ.get("YOASOBI_SHOPS", "").replace(" ", "").split(",") if s] or ["cg_kirakira"]   # 変数が空なら キラ学（2026-10-23 空で店なしになり見張りが空回りした）
 LABELS = {"cg_kirakira": "キラ学", "s_matikado": "街角", "mrs_orange": "オレンジ", "potya_reen": "ぽちゃ"}
@@ -482,8 +494,9 @@ def watch_shop(shopdir, st, now):
 
 def main():
     now = datetime.now(JST)
-    if os.environ.get("YOASOBI_PROBE_NAME", "").strip():
-        return 0 if probe_thread(SHOPS[0], os.environ["YOASOBI_PROBE_NAME"].strip()) else 1
+    probe = _manual_input("probe_name", "YOASOBI_PROBE_NAME")
+    if probe:
+        return 0 if probe_thread(SHOPS[0], probe) else 1
     if SEND_NAME and SEND_TEXT:
         ok = send_one(SHOPS[0], SEND_NAME, SEND_TEXT)
         return 0 if ok else 1
