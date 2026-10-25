@@ -233,7 +233,7 @@ CUSTOMER_SCHEMA = {
     "type": "object",
     "properties": {
         "category": {"type": "string", "enum": ["A", "B", "C"]},
-        "action": {"type": "string", "enum": ["reply", "draft", "none"]},
+        "action": {"type": "string", "enum": ["reply", "reply_notify", "draft", "none"]},
         "reply": {"type": "string"},
         "owner_note": {"type": "string"},
         "reason": {"type": "string"},
@@ -244,7 +244,7 @@ CUSTOMER_SCHEMA = {
 CUSTOMER_RULES = """
 ## 返し方（JSONの欄）
 - category：A＝決まりで答えられる（派遣できるホテルやエリア・料金・支払い・入室の手順・営業時間・サービスの説明・挨拶への返事）／B＝お店の判断が要る（予約の確定・日時・女の子の出勤や指名・値引き・延長・キャンセル・変更・クレーム・住所だけ送ってきた）／C＝読み切れない
-- action：reply＝この文を送ってよい（Aで、決まりの中だけで答えられる時）／draft＝下書き（Bか、決まりに無いことを含む時。受付が見て送る）／none＝返事は要らない（お礼だけ・ボットのメニュー操作だけ）
+- action：reply＝この文を送ってよい（決まりの中・CTIの写しで答えられる時）／reply_notify＝この文を送ったうえで受付にも知らせる（変更の希望にCTIの空きで答えた時など、受付がCTIを直す・確定する必要がある時）／draft＝下書き（決まりにもCTIの写しにも無いことを含む時。受付が見て送る）／none＝返事は要らない（お礼だけ・ボットのメニュー操作だけ）
 - reply：お客さんへの文（日本語で書く。チャットがお客さんの言葉に自動で訳す。短く、ていねいに、1通で200字以内。絵文字は1つまで）。none の時は空
 - owner_note：受付・一希さんに知らせること（Bの中身の要約、決まりに無い質問、怒っている等。日本語）。無ければ空
 - reason：なぜその category / action か（1文）
@@ -256,7 +256,7 @@ def customer_prompt():
     return know + "\n\n" + CUSTOMER_RULES
 
 
-def ask_customer(shop_label, name, history, latest):
+def ask_customer(shop_label, name, history, latest, schedule=""):
     """夜遊びヘブンのお客さんの発言にどう返すかを Claude に聞く。返す: (dict, 理由)。女の子向けの非公開メモは渡さない。"""
     if not enabled():
         return None, "off"
@@ -267,13 +267,14 @@ def ask_customer(shop_label, name, history, latest):
             f"今の日時：{datetime.now(JST).strftime('%Y-%m-%d %H:%M')}\n\n"
             f"直近のやりとり（古い順）：\n{history or '（無し）'}\n\n"
             f"今回返すお客さんの発言：\n{latest}\n\n"
-            "決まりに沿って JSON で答えてください。")
+            + (f"今日のCTI（この店の女の子の出勤と予約の時間。予約の時間は埋まっている）：\n{schedule}\n\n" if schedule else "今日のCTI：（写しが無い。空き・変更は受付へ）\n\n")
+            + "決まりに沿って JSON で答えてください。")
     return _call(customer_prompt(), user, CUSTOMER_SCHEMA)
 
 
 def check_customer(data):
     """お客さんに送ってよい形か。返す: (送るか, 理由)"""
-    if data.get("action") != "reply" or data.get("category") != "A":
+    if data.get("action") not in ("reply", "reply_notify") or data.get("category") == "C":
         return False, data.get("action") or "no_action"
     reply = (data.get("reply") or "").strip()
     if not reply:
