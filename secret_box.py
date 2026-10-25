@@ -29,6 +29,12 @@ def text(name, default=None):
         return default
     try:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except Exception:
+        if not _cache.get("_warned"):
+            _cache["_warned"] = True
+            print("secret_box: 部品 cryptography が無いので鍵つきの中身を開けない（pip install cryptography）")
+        return default
+    try:
         d = json.loads(p.read_text(encoding="utf-8"))
         v = AESGCM(key).decrypt(base64.b64decode(d["iv"]), base64.b64decode(d["ct"]), name.encode()).decode("utf-8")
     except Exception:

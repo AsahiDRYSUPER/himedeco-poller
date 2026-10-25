@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install "anthropic==0.125.0" requests   # 2.x は鍵の渡し方が変わったので、試した版に固定（2026-10-23）
+      - run: pip install "anthropic==0.125.0" requests cryptography   # 2.x は鍵の渡し方が変わったので、試した版に固定（2026-10-23）
       - name: Claude につながるか
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
