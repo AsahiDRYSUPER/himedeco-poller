@@ -47,6 +47,8 @@ jobs:
           SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
           TODO_KEY: ${{ secrets.TODO_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          CAST_MYPAGE_TOKEN: ${{ secrets.CAST_MYPAGE_TOKEN }}   # 夜遊びの配車の連絡を非公開側（cast-mypage）で起動する
+          AUTO_YOASOBI: ${{ vars.AUTO_YOASOBI }}                # on の時だけお客さんに送る（off は文を作るだけ）
           CASTS_MAP: ${{ secrets.CASTS_MAP }}
           NO_AUTO_IDS: ${{ secrets.NO_AUTO_IDS }}
           SOKUHIME_DRY: ${{ inputs.dry && '1' || '' }}
