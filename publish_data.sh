@@ -23,6 +23,8 @@ keep yoasobi_state.json || true
 keep yoasobi_ok.json || true
 # 即ヒメに時間を付けた記録(名前を含むので暗号化済み)。今回書けていなければ前のものを引き継ぐ
 keep sokuhime.enc.json || true
+# 夜遊びの空き状況の写し（YOASOBIの4店の女の子の出勤と予約の時間。名前を含むので暗号化済み）
+keep cti_avail.enc.json || true
 # 即ヒメの「生きている印」（名前なし。最終確認の時刻と件数）
 keep sokuhime_status.json || true   # 通知済みメッセージのID(数字のみ。名前も本文も入っていない)
 # 新着んの並び替えの記録（名前なし。時刻・人数・送った結果の数）。今回書けていなければ前のものを引き継ぐ（10分あける判断に使う）
