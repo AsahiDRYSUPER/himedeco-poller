@@ -37,7 +37,7 @@ jobs:
           REPLY_DRY_RUN: ${{ (github.event_name == 'schedule' || inputs.loop) && 'false' || (inputs.dry_run == false && 'false' || 'true') }}
           LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '55' || '0' }}
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
-        run: python3 reply_reviews.py
+        run: bash quiet.sh reply python3 reply_reviews.py
       - name: Save status
         if: always()
         run: |
