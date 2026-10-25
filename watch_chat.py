@@ -19,7 +19,7 @@
 止めたい時: リポジトリの変数 SHIFT_AUTO を off にすると、上げずに通知だけに戻る。
 
 お礼・了解だけの連絡は返さない。出勤の話で日にちか時間が足りない連絡には
-「出られそうな日と時間が決まったら教えてください」と返す（reply_rules.py）。質問や事情・読み切れない連絡には、
+日にちと時間を聞く定型文を返す（reply_rules.py。文は鍵つき）。質問や事情・読み切れない連絡には、
 10分待ってから「確認して、あらためて連絡しますね」とだけ返し、中身は人に見せる（2026-10-05〜）。
 止めたい時はリポジトリの変数 AUTO_REPLY を off。
 
@@ -53,6 +53,7 @@ from heaven_http import BASE, HeavenClient, LoginError, load_credentials
 from shift_reply import read_shift_reply
 import cast_mypage
 import reply_rules
+import secret_box
 import requests_log
 import booth
 import shift_apply
@@ -101,13 +102,9 @@ SHIFT_TALK = ("出勤", "出られ", "出れ", "◯日", "シフト")
 YOASOBI_SHOPS = ("cg_kirakira", "s_matikado", "mrs_orange", "potya_reen")
 YOASOBI_OK_RE = re.compile(r"外国人\s*(?:OK|ok|Ok|ＯＫ|おっけ|オッケ|大丈夫|いけます|できます|やります|やってみ)")
 YOASOBI_NOT_AFTER = ("じゃ", "では", "ない", "無理", "ちょっと", "NG", "やめ", "できな", "？", "?", "かな", "ですか", "なの")
-YOASOBI_ASK = ("ありがとう！「外国人OK」で登録しておくね！\n"
-               "外国人向けサイト（夜遊びヘブン）に載せるので、3つだけ教えてください。\n"
-               "①写真はヘブンと同じでOK？（顔を出したくなければ「目元かくして」と書いてね）\n"
-               "②英語・中国語・韓国語で、少しでも話せるものはある？（なければ「なし」でOK。翻訳アプリで大丈夫）\n"
-               "③外国人のお客さんに、できないプレイ・オプションがあれば教えてね（なければ「なし」）\n"
-               "返事はこのチャットでOK。載せたらまた連絡します！")
-YOASOBI_THANKS = "ありがとう、受け取りました！設定して、載せたらまた連絡するね！"
+_TX = secret_box.data("reply_texts") or {}   # 定型文は鍵つき（2026-10-25）
+YOASOBI_ASK = _TX.get("yoasobi_ask", "")
+YOASOBI_THANKS = _TX.get("yoasobi_thanks", "")
 # すでに載っている子へのプロフの質問（cast-mypage から1対1で送る文の目印。これが店の直前の発言にあれば、次の返事は答え）
 YOASOBI_PROFILE_MARK = "外国人向けサイト（YOASOBIヘブン）"
 YOASOBI_FILE = OUT_DIR / "yoasobi_ok.json"
@@ -516,7 +513,7 @@ def main():
         # 店の直前の発言が「設定したよ／載せたよ」の報告なら、返事はお礼か感想。答え扱いしない（2026-10-22 ある子の「ありがとう」に「受け取りました」を返した）
         _done = any(w in x.get("prev_shop", "") for w in ("設定したよ", "載せたよ"))
         x["yoasobi_answer"] = (not x["yoasobi"]) and x["gid"] not in NO_AUTO and not _q and not _done and (
-            YOASOBI_ASK[:14] in x.get("prev_shop", "") or YOASOBI_PROFILE_MARK in x.get("prev_shop", ""))
+            (bool(YOASOBI_ASK) and YOASOBI_ASK[:14] in x.get("prev_shop", "")) or YOASOBI_PROFILE_MARK in x.get("prev_shop", ""))
         # 夜遊び（外国人）の話は、定型の「確認して連絡します」を返さず人（クロード・AI）が会話の中で返す（一希さん 2026-10-22）
         # 店の直前の発言が夜遊びの話なら、その続き（「合ってます」「挨拶くらい」など）も同じ扱いにする
         _yw = ("外国人", "YOASOBI", "yoasobi", "Yoasobi", "ヨアソビ", "夜遊び")
@@ -578,7 +575,7 @@ def main():
             elif kind == "yoasobi_ok":
                 import shift_auto
                 cli = clis.get(x["shopdir"])
-                if x["shopdir"] not in YOASOBI_SHOPS or YOASOBI_ASK[:14] in x.get("prev_shop", "") or cli is None:
+                if x["shopdir"] not in YOASOBI_SHOPS or not YOASOBI_ASK or YOASOBI_ASK[:14] in x.get("prev_shop", "") or cli is None:
                     notify_one(x, auto=("need", False))        # 使っていない店／もう聞いた後／入れない時は人へ
                 else:
                     ok = yoasobi_reply(cli, x["shopdir"], x["gid"], YOASOBI_ASK)
@@ -591,7 +588,7 @@ def main():
             elif kind == "yoasobi_answer":
                 import shift_auto
                 cli = clis.get(x["shopdir"])
-                ok = bool(cli) and yoasobi_reply(cli, x["shopdir"], x["gid"], YOASOBI_THANKS)
+                ok = bool(cli) and bool(YOASOBI_THANKS) and yoasobi_reply(cli, x["shopdir"], x["gid"], YOASOBI_THANKS)
                 yoasobi_record(x, "answered")
                 print(f'{x["shop"]}: 外国人OKの3つの答えを受け取り、お礼を自動送信 {"OK" if ok else "NG"}')
                 notify_one(x, auto=("yoasobi_answer", ok))
@@ -616,7 +613,7 @@ def main():
                     deferred.add(x["id"])          # 続きが来るかもしれないので次の回に回す
                     continue
                 cli = clis.get(x["shopdir"])
-                if "決まったら教えてください" in x.get("prev_shop", "") or cli is None:
+                if not reply_rules.ASK_TEXT or reply_rules.ASK_TEXT[:12] in x.get("prev_shop", "") or cli is None:
                     notify_one(x, auto=("need", False))   # 二度は同じ文を返さない
                 else:
                     import shift_auto
@@ -635,13 +632,13 @@ def main():
                                             tentative=x["read"].get("tentative", ()), display=x["read"].get("display"))
                     notify_one(x, res)
                 elif kind == "later":
-                    if reply_rules.LATER_TEXT[:8] in x.get("prev_shop", "") or cli is None:
+                    if not reply_rules.LATER_TEXT or reply_rules.LATER_TEXT[:8] in x.get("prev_shop", "") or cli is None:
                         notify_one(x, auto=("need", False))   # 二度は同じ文を返さない
                     else:
                         ok = shift_auto.reply(cli, x["shopdir"], x["gid"], reply_rules.LATER_TEXT)
                         print(f'{x["shop"]}: 「分かりました」を自動送信 {"OK" if ok else "NG"}')
                         notify_one(x, auto=("later", ok))
-                elif "お返事ありがとうございます" in x.get("prev_shop", "") or cli is None:
+                elif not reply_rules.DECLINE_TEXT or reply_rules.DECLINE_TEXT[:12] in x.get("prev_shop", "") or cli is None:
                     notify_one(x, auto=("need", False))   # 二度は同じお礼を返さない
                 else:
                     ok = shift_auto.reply(cli, x["shopdir"], x["gid"], reply_rules.decline_text(shift_auto.yobi(x["name"])))
@@ -660,7 +657,7 @@ def main():
                 # 「出勤申請した時間で個室を」→ 申請の日と時刻で個室を取る（2026-10-05 一希さん）。本人には部屋のことは送らない
                 if x.get("apply") and cli is not None and booth.enabled(x["shopdir"]) and shift_apply.wants_booth(x["body"]):
                     book_from_apply(x, cli, now)
-                if reply_rules.HOLD_TEXT[:10] in x.get("prev_shop", "") or cli is None:
+                if not reply_rules.HOLD_TEXT or reply_rules.HOLD_TEXT[:10] in x.get("prev_shop", "") or cli is None:
                     notify_one(x, auto=("need", False))   # 同じ受け取りの返事を二度は送らない
                 else:
                     import shift_auto

@@ -18,7 +18,11 @@
 """
 import re
 
+import secret_box
 from shift_reply import DAYS, DAYSPAN, MD, NEG, WEEKDAY, _norm, read_shift_reply
+
+# 返事の定型文は鍵つき（sealed/reply_texts.enc、鍵は金庫 KNOWLEDGE_KEY）。開けない時は空＝自動では返さず人へ（2026-10-25）
+_TX = secret_box.data("reply_texts") or {}
 
 THANKS_RE = re.compile(
     r"^(?:ありがとうございます|ありがとうございました|ありがとうございまーす|ありがとう|了解です|了解しました|了解いたしました|了解|りょうかいです|りょうかい"
@@ -36,11 +40,11 @@ ASK_REASONS = {
     "「頃」がある", "「ごろ」がある", "「以降」がある", "「前後」がある", "「ラスト」がある", "「らすと」がある",
     "「最後まで」がある", "「閉店」がある",
 }
-ASK_TEXT = "出られそうな日と時間が決まったら教えてください🙌"
-DECLINE_TEXT = "お返事ありがとうございます😊\nまた出られる日が決まったら教えてくださいね！"
-LATER_TEXT = "分かりました！よろしくお願いします🙏"
+ASK_TEXT = _TX.get("ask_text", "")
+DECLINE_TEXT = _TX.get("decline_text", "")
+LATER_TEXT = _TX.get("later_text", "")
 # 見張りが読み切れない連絡（質問・事情・頼みごと入りなど）には、まず受け取ったことだけ返す（2026-10-05 一希さん「見張りはなんでもできるようになってもらいたい」。夜中に来た子の返事が朝まで放っておかれたため）
-HOLD_TEXT = "ありがとうございます！確認して、あらためて連絡しますね🙏"
+HOLD_TEXT = _TX.get("hold_text", "")
 LATER_WORDS = ("決まり次第", "決まったら連絡", "わかったら連絡", "分かったら連絡", "また連絡", "連絡します", "連絡いたします",
                "連絡しますね", "相談してみます", "相談します")
 # 断りでも、自動では返さず人に見せるもの（当日の欠勤・遅れ・体のこと・辞める話）
