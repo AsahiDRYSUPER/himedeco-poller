@@ -34,7 +34,7 @@ jobs:
           for i in $(seq 1 100); do sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock >/dev/null 2>&1 || break; sleep 5; done
           python3 -m playwright install --with-deps chromium || python3 -m playwright install chromium
       - name: 出勤の返事の読み方が壊れていないか
-        run: python3 test_shift_reply.py && python3 test_reply_rules.py && python3 test_shift_apply.py && python3 test_sokuhime_fix.py && python3 test_si9_sort.py
+        run: bash quiet.sh tests bash -c 'python3 test_shift_reply.py && python3 test_reply_rules.py && python3 test_shift_apply.py && python3 test_sokuhime_fix.py && python3 test_si9_sort.py'
       - name: Collect
         env:
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
@@ -58,7 +58,7 @@ jobs:
           AI_PRIVATE_NOTES: ${{ secrets.AI_PRIVATE_NOTES }}   # 女の子の取り分。公開ログに出ないよう金庫に（2026-10-23）
           GH_TOKEN: ${{ github.token }}
           LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '55' || '0' }}
-        run: python3 collect_loop.py
+        run: bash quiet.sh collect python3 collect_loop.py
       - name: Chain next run
         if: always() && (github.event_name == 'schedule' || inputs.loop)
         env:
