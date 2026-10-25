@@ -23,15 +23,15 @@ jobs:
       - name: 個室の自動予約（寮管理表）の鍵が通るか（書き込みなし）
         env:
           BOOTH_URL: ${{ secrets.BOOTH_URL }}
-        run: python3 booth.py --check
+        run: bash quiet.sh booth-check python3 booth.py --check
       - name: 出勤申請が読めるか（読むだけ。数だけ出す）
         continue-on-error: true   # 承認待ちが無い週は確かめられず失敗扱いになるが、他の確かめは続ける
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
-        run: python3 shift_apply.py --selftest
+        run: bash quiet.sh shift-apply-selftest python3 shift_apply.py --selftest
       - run: python3 -m playwright install --with-deps chromium
       - name: 返事の読み方
-        run: python3 test_shift_reply.py && python3 test_sokuhime_fix.py
+        run: bash quiet.sh tests bash -c 'python3 test_shift_reply.py && python3 test_sokuhime_fix.py'
       - name: 即ヒメ直し（見るだけ。CTIとヘブンを読んで、直す予定だけ出す）
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
@@ -44,8 +44,8 @@ jobs:
       - name: ブラウザでログインして出勤登録の画面が開けるか
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
-        run: python3 shift_auto.py --selftest s_matikado
+        run: bash quiet.sh shift-auto-selftest python3 shift_auto.py --selftest s_matikado
       - name: 裏姫デコの作成（cast-mypage）を起動できるか（鍵があれば）
         env:
           CAST_MYPAGE_TOKEN: ${{ secrets.CAST_MYPAGE_TOKEN }}
-        run: python3 cast_mypage.py --test
+        run: bash quiet.sh cast-mypage-test python3 cast_mypage.py --test
