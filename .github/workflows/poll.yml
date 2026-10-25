@@ -42,7 +42,7 @@ jobs:
           LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '57' || '0' }}
           VERIFY_ORDER: ${{ inputs.verify_order && '1' || '' }}
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
-        run: python3 poll.py
+        run: bash quiet.sh poll python3 poll.py
       - name: Save status
         if: always()
         run: |
