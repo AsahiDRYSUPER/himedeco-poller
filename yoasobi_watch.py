@@ -42,6 +42,55 @@ LABELS = {"cg_kirakira": "キラ学", "s_matikado": "街角", "mrs_orange": "オ
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
 AUTO = os.environ.get("AUTO_YOASOBI", "off").strip().lower() in ("on", "1", "true", "yes")
+# YOASOBIヘブン専用のネット予約（店のカレンダー。会員ログインのあとに開く）。AIは文の中に [予約リンク] と書き、ここで差し替える（2026-10-25 一希さん）
+YO_DIR = {"cg_kirakira": "kirakira", "s_matikado": "s_matikado", "mrs_orange": "mrs_orange", "potya_reen": "potya_reen"}
+
+
+def reserve_link(shopdir):
+    from urllib.parse import quote
+    d = YO_DIR.get(shopdir, "")
+    back = quote(f"https://yoasobi-heaven.com/en/okayama/YA3301/{d}/", safe="")
+    return (f"https://yoasobi-heaven.com/web-yoyaku/calendar/?language=en&back={back}&prefectures=okayama"
+            f"&area1=A3301&area2=A330101&directory_name={d}&forward=F2")
+
+
+_AVAIL = {"loaded": False, "data": None}
+
+
+def avail_text(shopdir):
+    """日本の実行機が残したCTIの写し（暗号化）を読み、この店の女の子の出勤と予約の時間を短い文にする。読めなければ空。"""
+    if not _AVAIL["loaded"]:
+        _AVAIL["loaded"] = True
+        try:
+            import base64
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            k = os.environ.get("TODO_KEY", "")
+            enc = requests.get(f"{PUBLIC_RAW}/data/cti_avail.enc.json?t={int(time.time())}", timeout=20).json()
+            raw = AESGCM(base64.b64decode(k)).decrypt(base64.b64decode(enc["iv"]), base64.b64decode(enc["ct"]), None)
+            d = json.loads(raw)
+            if datetime.fromisoformat(d["generated_at"]) > datetime.now(JST) - timedelta(minutes=30):
+                _AVAIL["data"] = d                 # 30分より古い写しは使わない（空きを間違えるため）
+        except Exception:
+            _AVAIL["data"] = None
+    d = _AVAIL["data"]
+    if not d:
+        return ""
+    def hm(m):
+        return f"{'翌' if m >= 24 * 60 else ''}{(m // 60) % 24}:{m % 60:02d}"
+    lines = []
+    for g in d.get("girls", []):
+        if g.get("shop") != shopdir:
+            continue
+        if g.get("absent"):
+            lines.append(f"- {g['name']}：今日は休み（当欠）")
+            continue
+        w = g.get("work")
+        work = f"出勤 {hm(w[0])}-{hm(w[1])}（一番早い到着は {hm(w[0] + 30)}）" if w else "出勤の時間不明"
+        busy = "、".join(f"{hm(a)}-{hm(b)}" for a, b in g.get("busy", [])) or "なし"
+        lines.append(f"- {g['name']}：{work}／予約で埋まっている時間 {busy}")
+    return f"（{d.get('day', '')} の写し）\n" + "\n".join(lines) if lines else ""
+
+
 HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じスレッドに送る間隔（分）
 HOLD_TEXT = os.environ.get("YOASOBI_HOLD_TEXT", "").strip() or "メッセージありがとうございます。担当スタッフが確認して、すぐにご連絡いたします。少々お待ちください。"
 RENOTIFY_MIN = int(os.environ.get("YOASOBI_RENOTIFY_MIN", "180"))   # 同じ未返信を、何分たったらもう一度知らせるか
@@ -358,7 +407,9 @@ def watch_shop(shopdir, st, now):
             body = f"{r['name']}（{age}分前）\n{latest[:400]}"
             # まず Claude に聞く（決まり＝yoasobi_knowledge.md）。A で決まりの中なら、AUTO_YOASOBI=on の時だけそのまま送る。
             # それ以外は下書きを付けて知らせる。Claude が使えない時は今まで通りの仕分けだけ（2026-10-23）
-            data, why = (ai_reply.ask_customer(label, r["name"], hist, latest) if ai_reply.enabled() else (None, "off"))
+            data, why = (ai_reply.ask_customer(label, r["name"], hist, latest, avail_text(shopdir)) if ai_reply.enabled() else (None, "off"))
+            if data and data.get("reply"):
+                data["reply"] = data["reply"].replace("[予約リンク]", reserve_link(shopdir))
             sent, title = False, ""
             if data:
                 cat = data.get("category") or "C"
@@ -384,7 +435,9 @@ def watch_shop(shopdir, st, now):
                         log(f"{label}: 「確認してご連絡します」を送信 {'OK' if held else 'NG'}（{how}）")
                         if held:
                             st["seen"][hk] = now.isoformat()
-                if sent:
+                if sent and data.get("action") == "reply_notify":
+                    title, body = f"⏰ 夜遊び {label} AIが返しました・受付の対応が要る {cat}", body + f"\n\n→ 送った返事：\n{reply}"
+                elif sent:
                     title, body = f"🤖 夜遊び {label} AIが返しました {cat}", body + f"\n\n→ 送った返事：\n{reply}"
                 elif held:
                     title = f"⏰ 夜遊び {label} 受付の返事が要る {cat}（お客さんには「確認してすぐご連絡します」を送った）"
