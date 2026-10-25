@@ -413,6 +413,12 @@ def run(now=None, dry=False, only=None):
         write_status(now, open=True, error=f"途中で止まった {type(e).__name__}", seconds=int(time.time() - t0))
         raise
     finally:
+        # 夜遊び（YOASOBI）の空き状況の写しと配車の連絡。即ヒメ直しが開いた CTI を使い回す（ログインを増やさない）。失敗しても即ヒメには響かせない（2026-10-25）
+        try:
+            import cti_yoasobi
+            cti_yoasobi.handle(cti, now, dry=dry)
+        except Exception as e:
+            print("夜遊び（空き状況の写し・配車の連絡）で失敗:", type(e).__name__)
         cti.close()
 
 
