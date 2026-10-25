@@ -20,11 +20,11 @@ import time
 from datetime import datetime, timedelta, timezone
 
 JST = timezone(timedelta(hours=9))
-import secret_box
-
-OFFICE = os.environ.get("CTI_OFFICE") or (secret_box.data("heaven_ids") or {}).get("cti_office", "")   # CTIの事業所は鍵つき（2026-10-25）
+OFFICE = os.environ.get("CTI_OFFICE", "T5GFow")
 OFFICE_URL = f"https://cti2.fuzoku-fan.jp/office/#{OFFICE}"
-# 行の印（待機場所・出勤・当欠・報酬など）と2文字の店の印が混ざっている。店は2文字の印だけで決める。
+# 行の印は「待機場所（事務所・街角・寮(セント)・車待機(プラッツ)…）」「出勤・当欠・出確なし」「報酬:◯円」「タグ（ロリ・ギャル…）」と
+# 2文字の店の印が混ざっている。店は2文字の印だけで決める（10/10 の見るだけ実行で分かった。「街角」は待機場所であって店ではない）。
+# 印→店の対応は、ヘブンの出勤一覧の名前と突き合わせて確認済み（10/10：街角15/15・とろ〜り6/6・VENUS7/7・UC2/2・キラ学20/24・オレンジ15/16・ぽちゃ12/13）
 SHOP_BADGE = {"KG": "cg_kirakira", "OR": "mrs_orange", "PO": "potya_reen", "MK": "s_matikado",
               "TO": "torori_angel", "VE": "venus_okayama", "UC": "undercover"}
 LAST_BADGES = set()
