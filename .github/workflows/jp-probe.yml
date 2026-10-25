@@ -34,4 +34,4 @@ jobs:
           CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
           CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
           PROBE_MAX: ${{ inputs.max }}
-        run: $PY cti_resv_probe.py
+        run: QUIET_DIR=/Users/yamazakikazuki/jp-logs bash quiet.sh jp-probe $PY cti_resv_probe.py
