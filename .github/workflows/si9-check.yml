@@ -27,7 +27,7 @@ jobs:
           python-version: "3.11"
       - run: pip install requests beautifulsoup4 cryptography playwright
       - run: python3 -m playwright install --with-deps chromium
-      - run: python3 test_si9_sort.py
+      - run: bash quiet.sh si9-test python3 test_si9_sort.py
       - name: 並びの案を作る（mode が send の時だけ保存して送る）
         env:
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
@@ -41,5 +41,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p out
-          python3 si9_sort.py
+          bash quiet.sh si9-sort python3 si9_sort.py
           if [ "${{ inputs.mode }}" = "send" ] && [ -f out/si9_status.json ]; then bash publish_data.sh; fi
