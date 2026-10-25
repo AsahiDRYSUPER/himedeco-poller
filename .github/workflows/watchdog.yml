@@ -35,4 +35,4 @@ jobs:
       - name: 止まっていないかを見る
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-        run: python3 watchdog.py ${{ inputs.test && '--test' || '' }} || true
+        run: bash quiet.sh watchdog python3 watchdog.py ${{ inputs.test && '--test' || '' }} || true
