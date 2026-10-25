@@ -26,4 +26,4 @@ jobs:
         env:
           SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
           SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
-        run: $PY si9_diag.py ${{ inputs.shops }}
+        run: QUIET_DIR=/Users/yamazakikazuki/jp-logs bash quiet.sh si9-diag $PY si9_diag.py ${{ inputs.shops }}
