@@ -513,7 +513,7 @@ def main():
         x["yoasobi"] = yoasobi_ok(x["body"]) and x["gid"] not in NO_AUTO
         # 3つの質問への答え：店の直前の発言が質問で、相手の発言が「質問返し」でない時だけ（「指名込みですか？」を答え扱いして「受け取りました」を返してしまった 2026-10-22）
         _q = re.search(r"[？?]\s*$", x["body"]) and len(x["body"]) <= 40
-        # 店の直前の発言が「設定したよ／載せたよ」の報告なら、返事はお礼か感想。答え扱いしない（2026-10-22 斉藤るい「ありがとう」に「受け取りました」を返した）
+        # 店の直前の発言が「設定したよ／載せたよ」の報告なら、返事はお礼か感想。答え扱いしない（2026-10-22 ある子の「ありがとう」に「受け取りました」を返した）
         _done = any(w in x.get("prev_shop", "") for w in ("設定したよ", "載せたよ"))
         x["yoasobi_answer"] = (not x["yoasobi"]) and x["gid"] not in NO_AUTO and not _q and not _done and (
             YOASOBI_ASK[:14] in x.get("prev_shop", "") or YOASOBI_PROFILE_MARK in x.get("prev_shop", ""))

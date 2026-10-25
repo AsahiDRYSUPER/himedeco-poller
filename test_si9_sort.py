@@ -24,7 +24,7 @@ assert not S.gap_ok(at(2026, 10, 18, 17, 9), "2026-10-18T16:00:00+09:00", "2026-
 
 # ---------- 名前 ----------
 assert S.norm("試験甲...") == "試験甲" and S.norm("試験乙【新入") == "試験乙" and S.norm("試験丙【業界未経験】") == "試験丙"
-assert S.norm("試ヶ験 丁") == "試ケ験丁" and S.norm("試験戊…") == "試験戊" and S.norm("Ｍｉｋｕ") == "Miku"
+assert S.norm("試ヶ験 丁") == "試ケ験丁" and S.norm("試験戊…") == "試験戊" and S.norm("Ｔｅｓｔ") == "Test"
 
 # ---------- 即ヒメの画面（10/17 キラ学の作りと同じ形。名前は作りもの） ----------
 def box(cls, name, shift, red, comment="", serving=False):
@@ -36,7 +36,7 @@ def box(cls, name, shift, red, comment="", serving=False):
 
 
 HTML = "".join([
-    box("sokuhimegirlbox2", "試験一号【…", "12:00～ 2:00", "16:26～待機中", "148cm 18:00～19:00 にご案内"),
+    box("sokuhimegirlbox2", "試験一号【…", "12:00～ 2:00", "16:26～待機中", "150cm 18:00～19:00 にご案内"),
     box("sokuhimegirlbox", "試験三号…", "16:00～ 22:00", "次回17:58～", "2025年 デビュー 10:00～", serving=True),
     box("sokuhimegirlbox3", "試験桜【…", "10:00～ 18:00", "受付終了", "受付終了まであと少し"),
     box("sokuhimegirlbox3", "試験十三…", "20:30～ 3:00", "次回00:40～", "", serving=True),

@@ -33,7 +33,7 @@ import ai_reply  # noqa: E402
 
 ANS = {"action": "reply", "reply": "試験さん、ありがとう！英語は挨拶程度・NGなし・写真はヘブンと同じ、で設定しておくね。終わったら連絡するね。",
        "owner_note": "", "learned": "",
-       "yoasobi": {"is_answer": True, "complete": True, "wants_listed": False, "lang_en": "1", "lang_zh": "0", "lang_kr": "0", "ng": [], "photo": "same", "all_options_ok": True, "three_p": "ok", "qa": {"q1": "後楽園", "q2": "", "q3": "", "q4": "", "q5": "", "q6": "", "q7": ""}}}
+       "yoasobi": {"is_answer": True, "complete": True, "wants_listed": False, "lang_en": "1", "lang_zh": "0", "lang_kr": "0", "ng": [], "photo": "same", "all_options_ok": True, "three_p": "ok", "qa": {"q1": "サンプル公園", "q2": "", "q3": "", "q4": "", "q5": "", "q6": "", "q7": ""}}}
 
 ok = True
 
@@ -83,7 +83,7 @@ watch_chat.handle_ai(x, object())
 ok &= len(sent_texts) == 1 and "設定しておくね" in sent_texts[0]
 ok &= any("AIが返しました" in n for n in notes) and any("英★1" in n for n in notes)
 ok &= len(DISPATCH) == 1 and DISPATCH[0][0] == "yoasobi-setup.yml" and DISPATCH[0][1]["en"] == "1" and DISPATCH[0][1]["gid"] == "99999999"
-ok &= "後楽園" in DISPATCH[0][1]["qa"] and DISPATCH[0][1]["courses"] == "3p_ok,all_ok"
+ok &= "サンプル公園" in DISPATCH[0][1]["qa"] and DISPATCH[0][1]["courses"] == "3p_ok,all_ok"
 print("setup dispatch:", len(DISPATCH))
 print("handle_ai: sent", len(sent_texts), "notes", len(notes))
 
@@ -92,7 +92,7 @@ print("cast:", "ALL OK" if ok else "FAILED")
 # お客さん（夜遊び）向け：決まりの中なら reply、判断が要るなら draft、送ってよい形の確かめ
 CUST = {"category": "A", "action": "reply", "reply": "提携ホテルはございません。岡山市内のホテルでしたらご派遣できます。", "owner_note": "", "reason": "提携ホテルの有無は決まり"}
 anthropic.Anthropic = fake_client(CUST)
-c, whyc = ai_reply.ask_customer("キラ学", "Chen", "[客] 東横インは予約できますか？", "提携しているホテルはありますか？")
+c, whyc = ai_reply.ask_customer("キラ学", "サンプル太郎", "[客] 駅前のホテルは予約できますか？", "提携しているホテルはありますか？")
 ok2 = (whyc == "ok" and c["category"] == "A")
 ok2 &= "夜遊びヘブン" in CALLS[-1]["system"][0]["text"] and "取り分" not in CALLS[-1]["system"][0]["text"]
 ok2 &= ai_reply.check_customer(c) == (True, "ok")
