@@ -56,16 +56,17 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           YOASOBI_SHOPS: ${{ inputs.shops || 'cg_kirakira' }}
           AUTO_YOASOBI: ${{ vars.AUTO_YOASOBI || 'off' }}
-          YOASOBI_STATE: yoasobi_state.json
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AI_REPLY: ${{ vars.AI_REPLY }}
           AI_MODEL: ${{ vars.AI_MODEL }}
           AI_EFFORT: ${{ vars.AI_EFFORT }}
-        run: bash quiet.sh yoasobi python3 yoasobi_watch.py || true
-      - name: 記録を保存
-        if: always()
+          TODO_KEY: ${{ secrets.TODO_KEY }}   # 空き状況の写し（cti_avail.enc.json）を開く（2026-10-25）
         run: |
-          git config user.name "yoasobi-bot"
-          git config user.email "actions@github.com"
-          git add yoasobi_state.json 2>/dev/null || true
-          git diff --cached --quiet || { git commit -m "yoasobi state" && git pull --rebase -q && git push; } || true
+          mkdir -p out
+          bash quiet.sh yoasobi python3 yoasobi_watch.py || true
+      - name: 記録を公開（data ブランチの yoasobi_state.json。main にはコミットしない。2026-10-26）
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TODO_KEY: ${{ secrets.TODO_KEY }}
+        run: bash publish_data.sh || true

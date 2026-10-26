@@ -1,13 +1,11 @@
 """即ヒメ直しが開いた CTI のついでに、夜遊び（YOASOBIヘブン）の2つの仕事をする（日本の実行機）。2026-10-25
 
-1. 空き状況の写し：YOASOBIの4店の女の子の出勤と予約の時間を、暗号化して out/cti_avail.enc.json に残す
-   （公開の dataブランチに出るが、鍵 TODO_KEY が無いと読めない）。お客さんのチャットの見張りが「20時に空いてる？」「変更したい」に
-   CTIを見て答えるのに使う（一希さん 10/25）。
-2. 配車の連絡：外国人向けコースの予約で「送りﾄﾞﾗｲﾊﾞｰ」に入力が入ったら（＝ドライバーが決まった）、非公開の cast-mypage の
-   yoasobi-dispatch を起動して、お客さんに車のナンバー・着く時刻・合流の仕方を送ってもらう（一希さん 10/25）。
-   読んだ中身（お客さん・ドライバー・ホテル）は公開のログに出さない。送った印は実行機（Mac）の中のファイルにだけ残す。
+1. 空き状況の写し：対象の店の女の子の出勤と予約の時間を、暗号化して out/cti_avail.enc.json に残す
+   （公開の dataブランチに出るが、鍵 TODO_KEY が無いと読めない）。お客さんのチャットの見張りが使う。
+2. 配車の連絡：対象の予約を見分けて、決まりに合ったら非公開側（cast-mypage）の仕組みを起動する。
+   見分けの言葉は鍵つき（yoasobi_templates の "dispatch_match"）。開けない時は配車の連絡をしない。
+   読んだ中身は公開のログに出さない。送った印は実行機（Mac）の中のファイルにだけ残す。
 """
-import base64
 import json
 import os
 import re
@@ -19,11 +17,23 @@ import requests
 JST = timezone(timedelta(hours=9))
 YO_SHOPS = ("cg_kirakira", "s_matikado", "mrs_orange", "potya_reen")
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
-AVAIL_FILE = OUT_DIR / "cti_avail.enc.json"
+AVAIL_NAME = "cti_avail"   # 空き状況の写し（鍵つき out/cti_avail.enc.json。data_box で書く）
 STATE = Path(os.environ.get("CTI_YOASOBI_STATE", str(Path.home() / "jp-state" / "cti_yoasobi.json")))
 MAX_OPEN = int(os.environ.get("CTI_YOASOBI_MAX_OPEN", "12"))       # 1回で開く予約の窓の数の上限（即ヒメ直しを遅らせない）
 LOOK_AHEAD = int(os.environ.get("CTI_YOASOBI_AHEAD_MIN", "180"))   # 何分先までの予約を見るか
 CAST_REPO = "AsahiDRYSUPER/cast-mypage"
+
+
+def dispatch_match():
+    """配車の連絡の見分けの言葉（鍵つき）。返す: {"customer_prefix", "course_word", "self_drive"} か None（開けない・足りない）"""
+    try:
+        import secret_box
+        m = (secret_box.data("yoasobi_templates") or {}).get("dispatch_match") or {}
+    except Exception:
+        return None
+    if not isinstance(m, dict) or not all(isinstance(m.get(k), str) and m.get(k) for k in ("customer_prefix", "course_word", "self_drive")):
+        return None
+    return m
 
 WIN_JS = r"""() => {
   const vis = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
@@ -31,11 +41,6 @@ WIN_JS = r"""() => {
   const m = modals[modals.length - 1] || document.body;
   return (m.innerText || '').replace(/[ \t]+/g, ' ');
 }"""
-
-
-def _key():
-    k = os.environ.get("TODO_KEY", "")
-    return base64.b64decode(k) if k else None
 
 
 def _now_min(now):
@@ -50,10 +55,9 @@ def _hhmm(m):
 
 # ---------- 1. 空き状況の写し（暗号化） ----------
 def save_avail(people, now, head):
-    key = _key()
-    if key is None:
+    import data_box   # 鍵かけは dataブランチの他の記録と同じ部品で（2026-10-25）
+    if not data_box.ready():
         return 0
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     girls = []
     for p in people:
         if p.get("shop") not in YO_SHOPS or not p.get("name"):
@@ -62,11 +66,8 @@ def save_avail(people, now, head):
                       "up": bool(p.get("up")), "absent": bool(p.get("absent")),
                       "busy": [[b["s"], b["e"]] for b in p.get("bookings", []) if b.get("s") is not None]})
     payload = {"generated_at": now.isoformat(), "day": head, "girls": girls}
-    iv = os.urandom(12)
-    ct = AESGCM(key).encrypt(iv, json.dumps(payload, ensure_ascii=False).encode("utf-8"), None)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    AVAIL_FILE.write_text(json.dumps({"iv": base64.b64encode(iv).decode(), "ct": base64.b64encode(ct).decode(),
-                                      "generated_at": now.isoformat()}), encoding="utf-8")
+    if not data_box.write(AVAIL_NAME, payload, OUT_DIR, generated_at=now.isoformat()):
+        return 0
     return len(girls)
 
 
@@ -86,8 +87,9 @@ def save_state(st, now):
     STATE.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
 
 
-def parse_window(text):
-    """予約の窓の文 → {顧客, 国, 日時, 料金, 料金システム, ホテル, 部屋, 送りﾄﾞﾗｲﾊﾞｰ, 女子}"""
+def parse_window(text, prefix=""):
+    """予約の窓の文 → {顧客, 国, 日時, 料金, 料金システム, ホテル, 部屋, 送りﾄﾞﾗｲﾊﾞｰ, 女子}。
+    prefix＝お客さんの名前の頭の印（鍵つき）。名前が「印（国）」の形なら国を取る"""
     out = {}
     i = text.rfind("顧客データ\n")
     if i >= 0:
@@ -95,7 +97,7 @@ def parse_window(text):
             if "(利用" in ln:
                 out["顧客"] = ln.split("(利用")[0].strip()
                 break
-    m = re.search(r"YOASOBI[（(]([^)）]+)[)）]", out.get("顧客", ""))
+    m = re.search(re.escape(prefix) + r"[（(]([^)）]+)[)）]", out.get("顧客", "")) if prefix else None
     out["国"] = m.group(1) if m else ""
     j = text.find("予約データ\n日時")
     blk = text[j:text.find("女子メモ", j)] if j >= 0 else ""
@@ -106,7 +108,7 @@ def parse_window(text):
     return out
 
 
-def read_window(cti, rid):
+def read_window(cti, rid, prefix=""):
     page = cti.page
     page.keyboard.press("Escape")
     try:
@@ -125,7 +127,7 @@ def read_window(cti, rid):
         page.mouse.dblclick(pt[0], pt[1])
         page.wait_for_selector("button.btn-detail:has-text('編集')", state="visible", timeout=8000)
         page.wait_for_timeout(700)
-        return parse_window(page.evaluate(WIN_JS) or "")
+        return parse_window(page.evaluate(WIN_JS) or "", prefix)
     except Exception:
         return None
     finally:
@@ -158,6 +160,10 @@ def handle(cti, now, dry=False):
     """即ヒメ直しのあと、CTI を閉じる前に呼ばれる。ログには件数だけ出す。"""
     people, head = cti.read(now)
     n_avail = save_avail(people, now, head)
+    mt = dispatch_match()
+    if mt is None:
+        print(f"夜遊び：空き状況の写し {n_avail}人／配車の見分けの言葉（鍵つき）が開けないので、配車の連絡はしない")
+        return
     st = load_state()
     nm = _now_min(now)
     send = (os.environ.get("AUTO_YOASOBI", "off").strip().lower() in ("on", "1", "true", "yes")) and not dry
@@ -179,18 +185,18 @@ def handle(cti, now, dry=False):
     for p, b in cands:
         if opened >= MAX_OPEN:
             break
-        info = read_window(cti, b["rid"])
+        info = read_window(cti, b["rid"], mt["customer_prefix"])
         opened += 1
         if info is None:
             continue
-        is_yo = ("外国人" in info.get("料金システム", "")) or info.get("顧客", "").upper().startswith("YOASOBI")
+        is_yo = (mt["course_word"] in info.get("料金システム", "")) or info.get("顧客", "").upper().startswith(mt["customer_prefix"].upper())
         if not is_yo:
             st["not_yo"][b["rid"]] = now.isoformat()
             continue
         found += 1
         drv = info.get("送りﾄﾞﾗｲﾊﾞｰ", "").strip()
-        if not drv or drv == "自走" or not re.search(r"[\s　]\S", drv):
-            waiting += 1                 # まだドライバーが決まっていない（自走はナンバーが無いので送らない）
+        if not drv or drv == mt["self_drive"] or not re.search(r"[\s　]\S", drv):
+            waiting += 1                 # まだ決まっていない・送れる形でない
             continue
         ok, why = dispatch(info, p["shop"], p["name"], b["s"], send)
         if ok:
@@ -199,5 +205,5 @@ def handle(cti, now, dry=False):
         else:
             print(f"  夜遊びの配車の連絡を起動できない（{why}）")
     save_state(st, now)
-    print(f"夜遊び：空き状況の写し {n_avail}人／外国人向けの予約 {found}件（開いた窓 {opened}）→ 配車の連絡を起動 {sent}件・ドライバー待ち {waiting}件"
+    print(f"夜遊び：空き状況の写し {n_avail}人／対象の予約 {found}件（開いた窓 {opened}）→ 配車の連絡を起動 {sent}件・待ち {waiting}件"
           + ("（送信はOFF。文を作るだけ）" if not send else ""))

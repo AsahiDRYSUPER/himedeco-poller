@@ -1,11 +1,11 @@
-"""即ヒメ直しを、1回の実行（日本の実行機）の中でくり返す（2026-10-24 一希さん「出勤が多い時間帯はもっと頻繁に」）。
+"""即ヒメ直しを、1回の実行（日本の実行機）の中でくり返す。
 
-- 間隔は sokuhime_pace.json：忙しい時間帯は busy_every_min 分ごと、それ以外は every_min 分ごと
-- 新着んの並び替え（si9_sort.py）は、1回目の即ヒメ直しのあとに横で1回だけ回す（即ヒメ直しが残す CTI の控えを使う。10分あける決まりは si9_sort.py の中）
+- 間隔は鍵つきの決まり（sealed/ops_sokuhime.enc の "pace"）：busy の時間帯は busy_every_min 分ごと、それ以外は every_min 分ごと。
+  開けない時はふだんの間隔（DEFAULT）で回す（直すかどうかは sokuhime_fix.py が決まりを見て決める。開けなければ直さない）
+- 新着んの並び替え（si9_sort.py）は、1回目の即ヒメ直しのあとに横で1回だけ回す（即ヒメ直しが残す CTI の控えを使う）
 - LOOP_SEC（既定 540秒）を過ぎる前に終わる。次の実行は workflow の最後で自分で起動する（Mac の起動係は止まった時の予備）
-- ヘブン・CTI へのログインの数は今までの即ヒメ直しと同じ（1回ごとに CTI 1・ヘブン 7店）。間隔を2分より短くはしない
+- ログインの数は1回ごとに今までの即ヒメ直しと同じ。間隔を2分より短くはしない
 """
-import json
 import os
 import subprocess
 import sys
@@ -18,9 +18,10 @@ DRY = os.environ.get("SOKUHIME_DRY", "") == "1"
 SKIP_SI9 = os.environ.get("SKIP_SI9", "") == "1"
 FIX_TIMEOUT = 300
 MIN_EVERY = 2
-DEFAULT = {"busy": [["11:00", "18:00"], ["20:00", "25:00"]], "busy_every_min": 3, "every_min": 5}
+DEFAULT = {"busy": [], "busy_every_min": 5, "every_min": 5}   # 決まりが開けない時（忙しい時間帯なし）
 UNIT = int(os.environ.get("PACE_UNIT_SEC", "60") or 60)   # 1分の長さ（試しの時だけ短くする）
 SI9_LOG = os.path.join(os.environ.get("RUNNER_TEMP") or "/tmp", "si9_sort_out.txt")
+_warned = []
 
 
 def _min(hhmm):
@@ -31,11 +32,11 @@ def _min(hhmm):
 def pace(now, conf=None):
     """今の間隔（分）と、忙しい時間帯か。翌0〜5時は 24〜29時として比べる"""
     if conf is None:
-        try:
-            with open("sokuhime_pace.json", encoding="utf-8") as f:
-                conf = json.load(f)
-        except Exception:
-            conf = {}
+        import secret_box
+        conf = (secret_box.data("ops_sokuhime") or {}).get("pace") or {}
+        if not conf and not _warned:
+            _warned.append(1)
+            print("即ヒメ直しの間隔の決まり（鍵つき）が開けないので、ふだんの間隔で回す", flush=True)
     c = {**DEFAULT, **{k: v for k, v in conf.items() if not k.startswith("_")}}
     m = now.hour * 60 + now.minute
     if m < 6 * 60:

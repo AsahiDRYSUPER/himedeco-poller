@@ -1,24 +1,7 @@
-"""即ヒメの「待機中なのに本当は接客中」を直す（一希さん 2026-10-09）。
-
-何をするか（約5分ごと。営業時間 9:00〜翌2:00 の間だけ）：
-  1. CTIの本日スケジュールを読む（cti_schedule.py。読むだけ）
-  2. 店ごとにヘブン管理画面の「即ヒメ登録」（C9StandbyGirlList.php）を開き、1人ずつ見る
-  3. 直すのは「接客中になっていない子」だけ。接客中の子には触らない（待機中に戻すこともしない）
-       ・出勤前（今がCTIの出勤開始より前）             → 接客中、終了＝出勤開始の時刻
-       ・今まさに仕事の最中（「終了」が付いていない箱）  → 接客中、終了＝その箱の終了時刻
-       ・60分以内（とろ〜りは30分以内）に仕事が始まる    → 接客中、終了＝その箱の終了時刻
-       ・仮予約も仕事として数える。「終了」が付いた箱は終わった仕事
-  3c. 追加（10/10 一希さん）：付ける終了時刻が、ヘブンの退勤時刻の60分前（とろ〜りは30分前）を過ぎていれば、
-       次の仕事は取れない＝完売なので、終了時刻は退勤時刻にして、ヘブンで「受付終了」にする
-       （例：オレンジのある子 退勤17:00・仕事が16:09終了 → 16:09でなく17:00→受付終了）
-  3b. 追加（10/10 一希さん）：箱に「入室」が付いているのに「時間付け」が無い予約は、まだ入室後の時間付けが済んでいない。
-       → ヘブンの終了時刻をCTIの箱の終了時刻に合わせ（接客中の子でもこの時だけは時刻を直す）、
-         CTIのその予約のプレイ状況を「時間付け」にして保存する（CTIに書くのはこれだけ）
-  4. 時間を付けた子だけ記録に残す（out/sokuhime.enc.json。名前を含むので暗号化。ボードで見る）
-
-送り方は人と同じ（ブラウザ）：接客中ボタン（img.servingEndTime）を押す → 出てくる窓で時（#servingEndHourList）・分（#servingEndMinuteList）を選ぶ → OK（#popup_ok）。
-裏からフォームを送る形（HTTP POST）は 10/10 の本番1回目で保存されなかった（出勤上げと同じ）ので使わない。
-押した後にもう一度ページを読み、本当に接客中になったかを確かめる（なっていなければ「失敗」と記録）。
+"""即ヒメ（ヘブンの待機表示）を、CTIの本日スケジュールに合わせて直す。
+CTIを読む → 店ごとに即ヒメ登録の画面を見る → 直す決まり（鍵つき sealed/ops_sokuhime.enc）に当てはまる子だけ接客中にする。
+決まりが開けない時は直さない（ログに1行・生きている印に error）。時間を付けた記録は名前を含むので暗号化（sokuhime.enc.json）。
+押し方は人と同じ（ブラウザ）。押したあと読み直して、本当に変わったかを確かめる。
 """
 import base64
 import json
@@ -35,6 +18,9 @@ from bs4 import BeautifulSoup
 
 from heaven_http import BASE, COMMU_IDS, HeavenClient, load_credentials
 from shift_auto import login as browser_login
+import data_box     # 生きている印（sokuhime_status）は鍵つきで dataブランチへ（2026-10-25）
+import ops_hours    # 動く時間は鍵つきの時間帯の決まり（2026-10-26）
+import secret_box   # 直す決まり（店ごとの分数）は鍵つき（2026-10-25）
 
 # 読むのは HTTP（軽い。7店とも通る）。ブラウザは「押す店」だけ開く。
 # ブラウザで続けて何店もログインすると、ヘブンの前の壁（Cloudflare）に "Sorry, you have been blocked" と止められる（10/10 に4店目で発生）ので、
@@ -58,17 +44,45 @@ JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
 PUBLIC_RAW = os.environ.get("PUBLIC_RAW", "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/data")
 LOG_FILE = OUT_DIR / "sokuhime.enc.json"
-STATUS_FILE = OUT_DIR / "sokuhime_status.json"   # 毎回の「生きている印」（名前なし。ボードの「最終確認 ◯分前」と、失敗した時のスマホ通知に使う）
+STATUS_NAME = "sokuhime_status"   # 毎回の「生きている印」（名前なし）。鍵つき out/sokuhime_status.enc.json。ボードと見張りが読む
 SHOPS = {
     "cg_kirakira": "キラキラ学園", "s_matikado": "街角レディ", "mrs_orange": "オレンジな気持ち",
     "venus_okayama": "VENUS", "potya_reen": "ぽちゃりーん", "torori_angel": "とろ〜りAngel",
     "undercover": "UNDERCOVER",
 }
-LEAD_MIN = {"torori_angel": 30}        # 仕事が始まる何分前から接客中にするか（それ以外は60分）
-LEAD_DEFAULT = 60
-LAST_TAKE = {"torori_angel": 30}        # 退勤の何分前まで仕事を取れるか（とろ〜りは30分前まで。他は60分前まで）
-LAST_TAKE_DEFAULT = 60
-OPEN_MIN, CLOSE_MIN = 9 * 60, 26 * 60  # 動く時間帯：9:00〜翌2:00（0:00からの分）
+# 直す決まり（鍵つき sealed/ops_sokuhime.enc。正本は非公開側）。開けない時は None ＝直さない
+_OPS = secret_box.data("ops_sokuhime") or {}
+LEAD_MIN = dict(_OPS.get("lead_min") or {})             # 店ごとの分数（意味は鍵つきの決まりの説明）
+LEAD_DEFAULT = _OPS.get("lead_default")                  # 上に無い店
+LAST_TAKE = dict(_OPS.get("last_take") or {})           # 店ごとの分数（意味は鍵つきの決まりの説明）
+LAST_TAKE_DEFAULT = _OPS.get("last_take_default")        # 上に無い店
+REASONS = dict(_OPS.get("reasons") or {})               # 理由の記号 → 記録に出す言葉（無ければ記号のまま）
+# 動く時間帯（0:00からの分。翌日は24時〜）。鍵つきの "hours" の "fix"。開けない時は None ＝直さない
+OPEN_MIN, CLOSE_MIN = ops_hours.span("fix", dict(_OPS.get("hours") or {})) or (None, None)
+CLOSE_CODES = ("idle_close", "close")                    # 受付終了にする理由の記号
+
+
+def ops_ready():
+    """直す決まりが開けているか（数と時間帯がそろっているか）"""
+    return (isinstance(LEAD_DEFAULT, int) and isinstance(LAST_TAKE_DEFAULT, int)
+            and isinstance(OPEN_MIN, int) and isinstance(CLOSE_MIN, int))
+
+
+def why_text(parts):
+    """理由の記号の並び [(記号, 値)] → 記録に出す文。言葉は鍵つきの "reasons"（{min} などを差し込む）。無ければ記号のまま"""
+    out = []
+    for code, kw in parts:
+        t = REASONS.get(code)
+        if isinstance(t, str) and t:
+            try:
+                out.append(t.format(**kw))
+                continue
+            except Exception:
+                pass
+        out.append((" " if out else "") + code + ("(" + ",".join(f"{k}={v}" for k, v in kw.items()) + ")" if kw else ""))
+    return "".join(out)
+
+
 KEEP_DAYS = 3                           # 記録を残す日数
 
 
@@ -88,7 +102,7 @@ def norm(s):
     t = re.sub(r"[\[【(（].*?[\]】)）]", "", t)
     # ヘブンの即ヒメの箱は名前が「◯◯◯◯【優…」のように途中で切れる。閉じていない【 から後ろも外す（10/11）
     t = re.sub(r"[\[【(（][^\]】)）]*$", "", t)
-    # 「城ヶ崎」と「城ケ崎」のような小さい字の違いは同じとみなす（10/10 キラ学で合わなかった）
+    # ヶ／ケ・ヵ／カ の違いは同じとみなす
     t = t.replace("ヶ", "ケ").replace("ヵ", "カ")
     return t.replace(" ", "").replace("　", "").replace("…", "")
 
@@ -143,29 +157,31 @@ def time_for_form(end_min, hours):
 
 
 # ---------- 直すかどうかを決める ----------
-def decide(box, person, now_min, lead, last=LAST_TAKE_DEFAULT):
-    """返す: (終了の分, 理由) か None。person は cti_schedule の1人分（無ければ None）。
-    last＝退勤の何分前まで仕事を取れるか（予約が無くても、それを過ぎていれば受付終了にする。一希さん 10/10）。"""
+# 決まり（鍵つき）に沿って、接客中にするか・終わりの時刻を決める。理由は記号で返す（言葉は why_text）。
+def decide(box, person, now_min, lead, last=None):
+    """返す: (終了の分, [(理由の記号, 値)]) か None。person は cti_schedule の1人分（無ければ None）。
+    lead・last は決まりの分数（鍵つき。last が無ければ決まりの既定）。"""
+    if last is None:
+        last = LAST_TAKE_DEFAULT
     if box["serving"]:
         return None                                   # 接客中の子には触らない
-    if person is None:
+    if person is None or lead is None:
         return None
     work = person.get("work")
     if work and now_min < work[0]:
-        return work[0], "出勤前"                     # 出勤前は、出勤の時刻まで接客中にしておく
+        return work[0], [("pre", {})]
     for b in person.get("bookings", []):
         if "終了" in b["flags"]:
             continue
         if b["s"] <= now_min < b["e"]:
-            return b["e"], "接客中" + ("（入室）" if "入室" in b["flags"] else "")
+            return b["e"], [("serving_in" if "入室" in b["flags"] else "serving", {})]
         if now_min < b["s"] <= now_min + lead:
-            return b["e"], f"{b['s'] - now_min}分後に開始"
-    # 予約が残っていない子：退勤まで last 分を切っていたら、もう仕事は取れない → 受付終了（終了＝退勤）
+            return b["e"], [("soon", {"min": b["s"] - now_min})]
     remaining = [b for b in person.get("bookings", []) if "終了" not in b["flags"] and b["e"] > now_min]
-    if not remaining:
+    if not remaining and last is not None:
         he = shift_end_min(box) or (work[1] if work else None)
         if he and now_min < he <= now_min + last:
-            return he, f"予約なし・退勤{hhmm(he)}まで{he - now_min}分→受付終了"
+            return he, [("idle_close", {"end": hhmm(he), "min": he - now_min})]
     return None
 
 
@@ -179,10 +195,11 @@ def shift_end_min(box):
 
 
 def chain_end(person, end_min, shopdir=None):
-    """終了のあと、次の予約までの空きが60分（とろ〜り30分）より短ければ仕事は入らないので、その予約の終了までつなげる。
-    つながる限り先へ（先まで予約で詰まっている子は、最後の予約の終了まで）。返す: (終了の分, つないだ本数)。一希さん 10/10（街角の子：18:33で切らず完売に）。"""
+    """決まり（鍵つき）に沿って、終わりの時刻を後ろの予約へつなげる。返す: (終了の分, つないだ本数)。"""
     gap = LAST_TAKE.get(shopdir, LAST_TAKE_DEFAULT)
     e, n = end_min, 0
+    if gap is None:
+        return e, n
     for b in sorted((person or {}).get("bookings", []), key=lambda x: x["s"]):
         if "終了" in b["flags"] or b["e"] <= e:
             continue
@@ -194,20 +211,20 @@ def chain_end(person, end_min, shopdir=None):
 
 
 def final_end(person, box, end_min, shopdir=None):
-    """終了がヘブンの退勤の60分前（とろ〜り30分前）を過ぎていれば、終了＝退勤 → 受付終了。返す: (終了の分, 付け足す理由)。
+    """決まり（鍵つき）に沿って終わりの時刻を決める。返す: (終了の分, 付け足す理由 [(記号, 値)])。
     退勤はヘブンの箱の出勤の終わり。読めなければCTIの出勤の終わり。"""
     end_min, n = chain_end(person, end_min, shopdir)
-    note = f"→次の予約まで空きが無いので{n}本先の終了{hhmm(end_min)}まで" if n else ""
+    parts = [("chain", {"n": n, "end": hhmm(end_min)})] if n else []
     he = shift_end_min(box)
     work = (person or {}).get("work")
     if he is None and work:
         he = work[1]
     if he is None:
-        return end_min, note
+        return end_min, parts
     last = LAST_TAKE.get(shopdir, LAST_TAKE_DEFAULT)
-    if he - end_min > last:            # ちょうど60分では入らない（移動・準備があるので、60分を超えて空いている時だけ）
-        return end_min, note
-    return max(he, end_min), note + f"→受付終了（退勤{hhmm(he)}まで{last}分以下で次が入らない）"
+    if last is None or he - end_min > last:
+        return end_min, parts
+    return max(he, end_min), parts + [("close", {"end": hhmm(he), "min": last})]
 
 
 def timed_fix(person, now_min):
@@ -222,7 +239,7 @@ def timed_fix(person, now_min):
 
 def aliases(name):
     """CTIの表記名は、複数の店に出ている子だと「◯◯【業界未経験】,△△RSP」のように店ごとの名前がカンマでつながる
-    （女子一覧の「所属店舗(女子名)」と同じ。一希さん 10/10）。カンマで分けて、どの名前でも合うようにする。"""
+    （女子一覧の「所属店舗(女子名)」と同じ）。カンマで分けて、どの名前でも合うようにする。"""
     out = []
     for part in re.split(r"[,、，]", name or ""):
         n = norm(part)
@@ -355,26 +372,25 @@ def badge_check(people, now):
 
 # ---------- 生きている印と、失敗の知らせ ----------
 def load_status():
+    """手元 → dataブランチ（sokuhime_status.enc.json → 無ければ移行前の sokuhime_status.json）の順"""
     try:
-        src = STATUS_FILE.read_text(encoding="utf-8") if STATUS_FILE.exists() else requests.get(f"{PUBLIC_RAW}/sokuhime_status.json", timeout=15).text
-        return json.loads(src)
+        v = data_box.load(STATUS_NAME, default={}, out_dir=OUT_DIR, base=PUBLIC_RAW, timeout=15)
+        return v if isinstance(v, dict) else {}
     except Exception:
         return {}
 
 
 def write_status(now, **fields):
-    """毎回書く。ボードが「最終確認 ◯分前」を出し、15分以上止まっていれば赤くする。"""
+    """毎回書く（鍵つき）。ボードが「最終確認 ◯分前」を出し、止まっていれば赤くする。"""
     st = load_status()
     st.update({"at": now.isoformat(timespec="seconds")}, **fields)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    STATUS_FILE.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+    data_box.write(STATUS_NAME, st, OUT_DIR, generated_at=now.isoformat(timespec="seconds"))
     return st
 
 
 def notify_failures(now, st, new):
     """CTIかヘブンで押せなかった子がいたら、スマホに知らせる（30分に1回まで。名前は入れない。中身はボードで）。
-    2026-10-15 一希さん「即ヒメの更新の通知はいらない」→ 既定では送らない（環境変数 SOKUHIME_NTFY=1 の時だけ送る）。
-    押せなかった子はボードの「即ヒメ」で見られる。"""
+    既定では送らない（環境変数 SOKUHIME_NTFY=1 の時だけ送る）。押せなかった子はボードの「即ヒメ」で見られる。"""
     if os.environ.get("SOKUHIME_NTFY", "").strip() != "1":
         return
     fails = [e for e in new if e.get("ok") is False or e.get("cti_ok") is False]
@@ -387,7 +403,7 @@ def notify_failures(now, st, new):
         from watch_chat import post_ntfy
         post_ntfy("即ヒメ：押せなかった子がいます", f"{len(fails)}件（ヘブン {sum(1 for e in fails if e.get('ok') is False)}・CTI {sum(1 for e in fails if e.get('cti_ok') is False)}）。ボードの「即ヒメ」で中身を確認してください", {"Tags": "warning"})
         st["notified_at"] = now.isoformat(timespec="seconds")
-        STATUS_FILE.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+        data_box.write(STATUS_NAME, st, OUT_DIR, generated_at=now.isoformat(timespec="seconds"))
     except Exception as e:
         print("通知できず:", type(e).__name__)
 
@@ -396,8 +412,14 @@ def notify_failures(now, st, new):
 def run(now=None, dry=False, only=None):
     now = now or datetime.now(JST)
     nm = now_minutes(now)
+    if not ops_ready():
+        # 直す決まり（鍵つき）が開けない：直さない。見張り・ボードに分かるよう生きている印に error を残す
+        print("即ヒメ: 直す決まり（鍵つき）が開けないので直さない（金庫の KNOWLEDGE_KEY を確かめる）")
+        if not dry:
+            write_status(now, open=True, error="直す決まり（鍵つき）が開けない", set=0, heaven_fail=0, cti_targets=0, cti_ok=0, cti_fail=0)
+        return 0
     if not (OPEN_MIN <= nm < CLOSE_MIN):
-        print(f"即ヒメ: 営業時間外（{now.strftime('%H:%M')}）なので何もしない")
+        print(f"即ヒメ: 動く時間の外（{now.strftime('%H:%M')}）なので何もしない")
         write_status(now, open=False, set=0, heaven_fail=0, cti_targets=0, cti_ok=0, cti_fail=0, error="")
         return 0
     import cti_schedule
@@ -434,6 +456,13 @@ def _run(cti, now, nm, dry, only, t0=None):
     except Exception as e:
         print("  CTIの控えを残せない:", type(e).__name__)
     unknown = sorted({b for b in cti_schedule.LAST_BADGES if b not in cti_schedule.SHOP_BADGE}) if hasattr(cti_schedule, "LAST_BADGES") else []
+    if not ops_ready():
+        # 直す決まり（鍵つき）が開けない：直さない。見張り・ボードに分かるよう生きている印に error を残す
+        print("即ヒメ: 直す決まり（鍵つき）が開けないので直さない（金庫の KNOWLEDGE_KEY を確かめる）")
+        if not dry:
+            write_status(now, open=True, error="直す決まり（鍵つき）が開けない", seconds=int(time.time() - (t0 or time.time())),
+                         set=0, heaven_fail=0, cti_targets=0, cti_ok=0, cti_fail=0)
+        return 0
     if dry:
         badge_check(people, now)
     entries = load_log() if not dry else []
@@ -498,7 +527,7 @@ def _run(cti, now, nm, dry, only, t0=None):
                 end_text = time_for_form(fe, hours)
                 entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": b["name"], "id": b["id"], "kind": "時間付け",
                          "before": ("接客中 " + b["end"]) if b["serving"] else ("待機中" if b["waiting"] else "（状態なし）"),
-                         "end": end_text, "why": "入室・時間付けがまだ" + fwhy,
+                         "end": end_text, "why": why_text([("timed", {})] + fwhy),
                          "cti": [(hhmm(x["s"]) + "-" + hhmm(x["e"]) + ("/".join([""] + x["flags"]) if x["flags"] else "")) for x in person["bookings"]],
                          "work": (hhmm(person["work"][0]) + "-" + hhmm(person["work"][1])) if person.get("work") else ""}
                 if dry:
@@ -535,12 +564,12 @@ def _run(cti, now, nm, dry, only, t0=None):
             if end_min <= nm:
                 n_skip += 1
                 continue
-            if "受付終了" not in why:
+            if not any(c in CLOSE_CODES for c, _ in why):
                 end_min, fwhy = final_end(person, b, end_min, shopdir)
-                why += fwhy
+                why = why + fwhy
             end_text = time_for_form(end_min, hours)
             entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": b["name"], "id": b["id"],
-                     "before": "待機中" if b["waiting"] else "（状態なし）", "end": end_text, "why": why,
+                     "before": "待機中" if b["waiting"] else "（状態なし）", "end": end_text, "why": why_text(why),
                      "cti": [(hhmm(x["s"]) + "-" + hhmm(x["e"]) + ("/".join([""] + x["flags"]) if x["flags"] else "")) for x in person["bookings"]],
                      "work": (hhmm(person["work"][0]) + "-" + hhmm(person["work"][1])) if person.get("work") else ""}
             if dry:
@@ -559,7 +588,7 @@ def _run(cti, now, nm, dry, only, t0=None):
         if st["page"] is not None:
             st["page"].context.close()
     browser.close()
-    # ヘブンの即ヒメに箱が無い子（出勤をテキストで入れている子・箱の名前が合わない子）でも、CTIの時間付けだけは押す（10/11 キラ学の子）
+    # ヘブンの即ヒメに箱が無い子（出勤をテキストで入れている子・箱の名前が合わない子）でも、CTIの時間付けだけは押す
     label_of = {v: k for k, v in SHOPS.items()}
     for person in people:
         tb = timed_fix(person, nm)
@@ -567,7 +596,7 @@ def _run(cti, now, nm, dry, only, t0=None):
             continue
         label = SHOPS.get(person["shop"], "店不明")
         entry = {"at": now.isoformat(timespec="minutes"), "shop": label, "name": person["name"], "id": "", "kind": "時間付け",
-                 "before": "ヘブンに箱なし", "end": hhmm(tb["e"]), "why": "入室・時間付けがまだ（CTIだけ）",
+                 "before": "ヘブンに箱なし", "end": hhmm(tb["e"]), "why": why_text([("timed_cti", {})]),
                  "cti": [(hhmm(x["s"]) + "-" + hhmm(x["e"]) + ("/".join([""] + x["flags"]) if x["flags"] else "")) for x in person["bookings"]],
                  "work": (hhmm(person["work"][0]) + "-" + hhmm(person["work"][1])) if person.get("work") else ""}
         if dry:

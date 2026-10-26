@@ -25,5 +25,6 @@ jobs:
           AI_REPLY: ${{ vars.AI_REPLY }}
           AI_MODEL: ${{ vars.AI_MODEL }}
           AI_EFFORT: ${{ vars.AI_EFFORT }}
+          TODO_KEY: ${{ secrets.TODO_KEY }}   # 学んだこと（dataブランチの ai_learned.enc.json）を開く（2026-10-25）
           OUT_DIR: /tmp
         run: python3 ai_reply.py --check

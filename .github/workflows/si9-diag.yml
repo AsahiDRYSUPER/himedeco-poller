@@ -17,7 +17,7 @@ jobs:
     runs-on: [self-hosted, jp]
     timeout-minutes: 15
     env:
-      PY: /Users/yamazakikazuki/jp-venv/bin/python
+      KNOWLEDGE_KEY: ${{ secrets.KNOWLEDGE_KEY }}   # 新着んの店の設定は鍵つき（sealed/ops_si9.enc。2026-10-25）
       LANG: ja_JP.UTF-8
       PYTHONUTF8: "1"
     steps:
@@ -26,4 +26,6 @@ jobs:
         env:
           SINCHAKUN_ID: ${{ secrets.SINCHAKUN_ID }}
           SINCHAKUN_PASSWORD: ${{ secrets.SINCHAKUN_PASSWORD }}
-        run: QUIET_DIR=/Users/yamazakikazuki/jp-logs bash quiet.sh si9-diag $PY si9_diag.py ${{ inputs.shops }}
+        run: |
+          PY="$HOME/jp-venv/bin/python"
+          QUIET_DIR="$HOME/jp-logs" bash quiet.sh si9-diag "$PY" si9_diag.py ${{ inputs.shops }}

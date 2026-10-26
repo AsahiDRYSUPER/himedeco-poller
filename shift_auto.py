@@ -1,10 +1,10 @@
 """出勤の返事が「日にち＋時間」で揃っていたら、人の手を借りずに出勤を上げて、本人に「上げました」と返す。
 
-やること（一希さんと決めた店のルールどおり）:
+やること:
     1. 出勤登録の画面で、その子・その日のセルを押して、時間を選んで「登録する」を押す
        （HTTPで送っても保存されないため、人と同じ操作をブラウザで再現する。cast-mypage/open_shift.py と同じ）
-    2. 今日からその出勤日の前日までの空いている日に「次回◯日出勤！」を入れる
-    3. 姫デコチャットで本人に「上げました」と返す
+    2. 今日からその出勤日の前日までの空いている日に、次の出勤の備考（鍵つきの定型）を入れる
+    3. 姫デコチャットで本人に返す（返事の文・備考の文は鍵つき sealed/reply_texts.enc。開けない時は上げず・送らず、人へ）
 
 公開リポジトリで動くので、ログにはキャスト名も本文も出さない（店名・キャストID・日付・結果だけ）。
 """
@@ -13,9 +13,24 @@ import sys
 from datetime import date, datetime, timedelta, timezone
 
 from heaven_http import BASE, COMMU_IDS, load_credentials
-from shift_reply import NOTE_TENTATIVE, hhmm
+from shift_reply import hhmm
+import secret_box
 
 JST = timezone(timedelta(hours=9))
+# 返事の文と備考の文は鍵つき（sealed/reply_texts.enc、正本は非公開側。2026-10-26）。開けない時は空
+_TX = secret_box.data("reply_texts") or {}
+NOTE_TENTATIVE = _TX.get("note_tentative", "")      # 未定の日の備考
+NEXT_NOTE = _TX.get("next_note", "")                # 次の出勤までの空いている日の備考（{day} に出勤日）
+SHIFT_OK = _TX.get("shift_ok", "")                  # 上げた時の返事（{yobi} {days} {tail}）
+SHIFT_CHANGE = _TX.get("shift_change", "")          # 時間を変えた時の返事（{yobi} {days} {tail}）
+TAIL_OK = _TX.get("shift_tail_ok", "")              # 返事の終わり（未定の日が無い時）
+TAIL_TENTATIVE = _TX.get("shift_tail_tentative", "")  # 返事の終わり（未定の日がある時。{days}）
+TENTATIVE_ONLY = _TX.get("tentative_only", "")      # 出勤予定だけの時の返事（{yobi} {days} {how}）
+
+
+def texts_ready():
+    """上げる・返すのに要る定型（鍵つき）がそろっているか。そろっていなければ自動では何もしない"""
+    return all((NOTE_TENTATIVE, NEXT_NOTE, SHIFT_OK, SHIFT_CHANGE, TAIL_OK, TAIL_TENTATIVE, TENTATIVE_ONLY))
 
 
 def login(page, shopdir):
@@ -112,7 +127,7 @@ def open_one(page, shopdir, gid, ymd, start, end, note="", name="", want_text=""
             cur = (page.input_value("#scheduleText") or "").strip()
         except Exception:
             cur = ""
-        if cur.startswith("次回") or cur == NOTE_TENTATIVE:
+        if cur.startswith(_next_head()) or (NOTE_TENTATIVE and cur == NOTE_TENTATIVE):
             page.fill("#scheduleText", "")      # 出勤予定の日が決まった時など（2026-09-28）
     page.wait_for_timeout(200)
     # 「登録する」はボタンではなくリンク。人が押すのと同じように押し、無ければ同じ関数を直接呼ぶ。
@@ -135,12 +150,21 @@ def open_one(page, shopdir, gid, ymd, start, end, note="", name="", want_text=""
     return ok, f"前: {before or '（空）'} → 後: {after or '（空）'}"
 
 
+def _next_head():
+    """次の出勤の備考の頭の言葉（{day} より前）。定型が無ければ、何にも合わない印"""
+    head = NEXT_NOTE.split("{day}")[0] if NEXT_NOTE else ""
+    return head or "\u0000"
+
+
 def fill_next(page, shopdir, gid, name, shift_ymd, today_ymd):
-    """店のルール: 出勤を上げたら、今日からその出勤日の前日までの空いている日に「次回◯日出勤！」を入れる。
-    埋まっている日（出勤あり・別の文）は触らない。"""
+    """出勤を上げたら、今日からその出勤日の前日までの空いている日に、次の出勤の備考（鍵つきの定型）を入れる。
+    埋まっている日（出勤あり・別の文）は触らない。定型が無ければ何もしない。"""
     d = date(int(shift_ymd[:4]), int(shift_ymd[4:6]), int(shift_ymd[6:]))
     t = date(int(today_ymd[:4]), int(today_ymd[4:6]), int(today_ymd[6:]))
-    text = f"次回{d.day}日出勤！"
+    if not NEXT_NOTE:
+        return "", [], []
+    text = NEXT_NOTE.format(day=d.day)
+    head = _next_head()
     done, skipped = [], []
     def ref_date(cell_day, n):
         for add in range(3):
@@ -164,13 +188,13 @@ def fill_next(page, shopdir, gid, name, shift_ymd, today_ymd):
             skipped.append(f"{int(ymd[4:6])}/{int(ymd[6:])}")
             continue
         before = cell_text(page, gid, ymd)
-        if before and "－" not in before and not before.startswith("次回"):
+        if before and "－" not in before and not before.startswith(head):
             skipped.append(f"{int(ymd[4:6])}/{int(ymd[6:])}")
             continue
         if before.startswith(text):
             done.append(f"{int(ymd[4:6])}/{int(ymd[6:])}")
             continue
-        m = re.match(r"次回(\d{1,2})日", before or "")
+        m = re.match(re.escape(head) + r"(\d{1,2})", before or "")
         if m:
             r = ref_date(cell_day, int(m.group(1)))
             if r is not None and r < d:
@@ -183,7 +207,7 @@ def fill_next(page, shopdir, gid, name, shift_ymd, today_ymd):
 
 def upload(shopdir, gid, name, shifts, today, tentative=()):
     """shifts: [(date, "12:00", "20:00")] → ([(date, ok, msg, fill)], [(date, ok, msg)])
-    tentative: 未定の日。先に備考へ「オキニトークでご確認ください。」を入れる（その日は「次回◯日」で上書きされない）"""
+    tentative: 未定の日。先に備考へ未定の日の定型を入れる（その日は次の出勤の備考で上書きされない）"""
     from playwright.sync_api import sync_playwright
     out, notes = [], []
     today_ymd = today.strftime("%Y%m%d")
@@ -201,6 +225,8 @@ def upload(shopdir, gid, name, shifts, today, tentative=()):
                     before = cell_text(page, gid, ymd) if goto_cell(page, shopdir, gid, ymd, name) else ""
                     if re.search(r"\d{1,2}:\d{2}", before):
                         ok, msg = False, f"もう出勤が入っているので触らず（{before}）"   # 備考を入れると出勤が消えるため
+                    elif not NOTE_TENTATIVE:
+                        ok, msg = False, "未定の日の定型（鍵つき）が開けない"
                     elif before.startswith(NOTE_TENTATIVE):
                         ok, msg = True, "もう出勤予定になっている"
                     else:
@@ -229,25 +255,41 @@ def upload(shopdir, gid, name, shifts, today, tentative=()):
 def yobi(name):
     """呼びかけに使う名前。「◯◯さん」のように「さん」で終わる源氏名は、重ねない。"""
     n = re.sub(r"[\[【(（].*?[\]】)）]", "", name or "").strip()
-    n = re.sub(r"(?<=[ぁ-んァ-ヶー一-龠])(RSP|RS|SP)$", "", n)   # とろ〜りの「RS」「RSP」は肩書きなので外す
+    n = re.sub(r"(?<=[ぁ-んァ-ヶー一-龠])(RSP|RS|SP)$", "", n)   # 名前の後ろの「RS」「RSP」は肩書きなので外す
     return n if n.endswith("さん") else n + "さん"
 
 
+def _fill(tpl, **kw):
+    """定型に差し込む。定型が無い・形が合わない時は空（＝送らない）"""
+    if not tpl:
+        return ""
+    try:
+        return tpl.format(**kw)
+    except Exception:
+        return ""
+
+
 def reply_text(name, shifts, extra="", tentative=(), display=None, change=False):
+    """本人への返事（定型は鍵つき）。定型が無ければ空を返す（呼ぶ側は送らない）"""
     if not shifts and tentative:
-        # 出勤予定（時間未定・「多分」など）だけの時（2026-09-28 一希さん「出勤予定のシフトでアップして、ちゃんと返して」）
+        # 出勤予定（時間未定など）だけの時
         days = list(display) if display else [f"{d.day}日" for d in sorted(set(tentative))]
         m = re.match(r"(\d+)日（(.+)）", next((x for x in days if "（" in x), ""))
         if m:     # 「1日（16:00〜18:00）」→ 例「1日 16時〜18時」
             how = f"{m.group(1)}日 " + m.group(2).replace(":00", "時").replace(":30", "時半")
         else:
             how = f"{sorted(set(tentative))[0].day}日 ◯時〜◯時"
-        return (f"{yobi(name)}、ありがとう！ {'・'.join(days)}は出勤予定で上げておいたよ🙌\n"
-                f"出られるのが決まったら「{how}」みたいに返してね😊") + (f"\n{extra}" if extra else "")
-    parts = list(display) if display else [f"{d.day}日 {s}〜{e}" for d, s, e in shifts]
-    tail = (f"{'・'.join(f'{d.day}日' for d in sorted(set(tentative)))}は決まったら教えてね😊" if tentative else "当日よろしくね😊")
-    did = "に変更しておいたよ🙌" if change else "で上げておいたよ🙌"   # 時間の変更の頼み（2026-10-17）
-    return f"{yobi(name)}、ありがとう！ {'・'.join(parts)}{did} {tail}" + (f"\n{extra}" if extra else "")
+        text = _fill(TENTATIVE_ONLY, yobi=yobi(name), days="・".join(days), how=how)
+    else:
+        parts = list(display) if display else [f"{d.day}日 {s}〜{e}" for d, s, e in shifts]
+        tail = (_fill(TAIL_TENTATIVE, days="・".join(f"{d.day}日" for d in sorted(set(tentative)))) if tentative else TAIL_OK)
+        if not tail:
+            return ""
+        # 時間の変更の頼み（2026-10-17）は変更の定型
+        text = _fill(SHIFT_CHANGE if change else SHIFT_OK, yobi=yobi(name), days="・".join(parts), tail=tail)
+    if not text:
+        return ""
+    return text + (f"\n{extra}" if extra else "")
 
 
 def clean(t):
@@ -277,9 +319,13 @@ def reply(cli, shopdir, gid, text):
 
 
 def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply="", tentative=(), display=None, change=False):
-    """上げる → 「次回◯日出勤！」 → 本人に返す。返す: {"ok", "replied", "detail"}
-    extra_reply: 返事の最後に足す一言（個室・迎えなど、人が対応する件がある時）"""
+    """上げる → 次の出勤の備考 → 本人に返す。返す: {"ok", "replied", "detail"}
+    extra_reply: 返事の最後に足す一言（個室・迎えなど、人が対応する件がある時）
+    返事・備考の定型（鍵つき）が開けない時は、上げず・備考も入れず・送らない（人へ。通知に理由が出る）"""
     now = now or datetime.now(JST)
+    if not texts_ready():
+        print(f"  {label} {gid}: 返事・備考の定型（鍵つき）が開けないので自動では上げない")
+        return {"ok": False, "replied": False, "detail": "返事・備考の定型（鍵つき）が開けないので自動では上げていない"}
     results, notes = upload(shopdir, gid, name, shifts, now.date(), tentative)
     parts, all_ok = [], True
     for d, ok, msg in notes:
@@ -292,9 +338,10 @@ def handle(cli, shopdir, label, gid, name, shifts, now=None, extra_reply="", ten
         parts.append(f"{d.day}日 {s}〜{e} {'✅' if ok else '✗ ' + msg}" + (f"（{fill}）" if fill else ""))
         print(f"  {label} {gid} {d.month}/{d.day} {s}〜{e}: {'OK' if ok else 'NG'} {msg}" + (f" / {fill}" if fill else ""))
     replied = False
-    if all_ok and cli is not None:
+    text = reply_text(name, shifts, extra_reply, tentative, display, change)
+    if all_ok and cli is not None and text:
         try:
-            replied = reply(cli, shopdir, gid, reply_text(name, shifts, extra_reply, tentative, display, change))
+            replied = reply(cli, shopdir, gid, text)
         except Exception as ex:
             print(f"  {label} {gid}: 返信で {type(ex).__name__}")
         print(f"  {label} {gid}: 返信 {'OK' if replied else 'NG'}")

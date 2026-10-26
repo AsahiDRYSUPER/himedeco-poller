@@ -2,9 +2,8 @@ name: jp-sokuhime
 
 # 日本のIPで動く実行機（self-hosted, jp）で、即ヒメ直しと新着んの並び替えを回す。
 # 2026-10-23 GitHubのクラウド（米国）からは CTI が接続拒否・新着んがログインで403になったため、この2つだけ日本側で動かす。
-# 2026-10-24 一希さん「即ヒメの時間付けは10分間隔だと遅い。出勤が多い時間帯はもっと頻繁に」→
-#   1回の実行の中で即ヒメ直しをくり返す（sokuhime_loop.py。忙しい時間帯は3分ごと・ふだんは5分ごと。sokuhime_pace.json で変えられる）。
-#   新着んは横で1回だけ（10分あける決まりは si9_sort.py の中）。実行は約9分で終わり、最後に自分で次の実行を起動する（営業時間のうち）。
+#   1回の実行の中で即ヒメ直しをくり返す（sokuhime_loop.py。間隔は鍵つきの決まり sealed/ops_sokuhime.enc）。
+#   新着んは横で1回だけ（間をあける決まりは鍵つき）。実行は約9分で終わり、最後に自分で次の実行を起動する（動く時間のうち。時間帯は鍵つきの決まり）。
 # GitHub の定期実行（schedule）はこのアカウントでは4〜5時間に1回しか動かない。Mac の起動係（~/jp-dispatch/dispatch.sh、10分ごと）は鎖が切れた時の予備。下の schedule も予備。
 
 on:
@@ -15,7 +14,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "*/10 0-17 * * *"
+    - cron: "*/10 * * * *"   # 予備。動く時間かどうかは中で鍵つきの決まりを見て決める
 
 permissions:
   contents: write
@@ -31,13 +30,14 @@ jobs:
     timeout-minutes: 20
     env:
       KNOWLEDGE_KEY: ${{ secrets.KNOWLEDGE_KEY }}   # 鍵つきの指示書・定型文・店の設定を開く（2026-10-25）
-      PY: /Users/yamazakikazuki/jp-venv/bin/python
       LANG: ja_JP.UTF-8
       PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
       - name: 道具がそろっているか
-        run: $PY -c "import playwright, requests, bs4, cryptography; print('ok')"
+        run: |
+          PY="$HOME/jp-venv/bin/python"
+          "$PY" -c "import playwright, requests, bs4, cryptography; print('ok')"
       - name: 即ヒメ直し（くり返し）と新着んの並び替え（横で1回）
         env:
           CITYHEAVEN_API_KEYS: ${{ secrets.CITYHEAVEN_API_KEYS }}
@@ -56,22 +56,24 @@ jobs:
           SI9_SORT_MODE: ${{ inputs.dry && 'dry' || '' }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          PY="$HOME/jp-venv/bin/python"
           mkdir -p out
-          QUIET_DIR=/Users/yamazakikazuki/jp-logs bash quiet.sh sokuhime $PY sokuhime_loop.py
+          QUIET_DIR="$HOME/jp-logs" bash quiet.sh sokuhime "$PY" sokuhime_loop.py
       - name: 記録を公開（data ブランチ）
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash publish_data.sh
-      - name: 次の実行を起動する（営業時間 JST 9:00〜翌2:50 のうち）
+          TODO_KEY: ${{ secrets.TODO_KEY }}   # 切り替え直後に、前の平文の記録を鍵つきへ移す（publish_data.sh → data_box.py）
+        run: PY="$HOME/jp-venv/bin/python" bash publish_data.sh
+      - name: 次の実行を起動する（動く時間のうち。時間帯は鍵つきの決まり ops_sokuhime の "hours" の "chain"）
         if: always() && !inputs.dry
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          H=$(TZ=Asia/Tokyo date +%H); H=${H#0}; H=${H:-0}
-          if [ "$H" -ge 9 ] || [ "$H" -le 2 ]; then
+          PY="$HOME/jp-venv/bin/python"
+          if "$PY" ops_hours.py within chain; then
             # 実行機（launchd の常駐）の PATH には ~/bin が入っていないので、gh は置き場所を直接書く（2026-10-24 黙って失敗していた）
-            /Users/yamazakikazuki/bin/gh workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" && echo "次の実行を起動した" || echo "次の実行を起動できなかった（起動係が10分以内に始める）"
+            "$HOME/bin/gh" workflow run "${{ github.workflow }}" --repo "${{ github.repository }}" && echo "次の実行を起動した" || echo "次の実行を起動できなかった（起動係が10分以内に始める）"
           else
-            echo "営業時間外なので次は起動しない（朝は起動係が始める）"
+            echo "動く時間の外か、時間帯の決まり（鍵つき）が開けないので次は起動しない（朝は起動係が始める）"
           fi

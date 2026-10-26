@@ -25,7 +25,6 @@ jobs:
     timeout-minutes: 15
     env:
       KNOWLEDGE_KEY: ${{ secrets.KNOWLEDGE_KEY }}   # 鍵つきの指示書・定型文・店の設定を開く（2026-10-25）
-      PY: /Users/yamazakikazuki/jp-venv/bin/python
       LANG: ja_JP.UTF-8
       PYTHONUTF8: "1"
     steps:
@@ -35,4 +34,6 @@ jobs:
           CTI_PASSWORD: ${{ secrets.CTI_PASSWORD }}
           CTI_LOGIN_URL: ${{ secrets.CTI_LOGIN_URL }}
           PROBE_MAX: ${{ inputs.max }}
-        run: QUIET_DIR=/Users/yamazakikazuki/jp-logs bash quiet.sh jp-probe $PY cti_resv_probe.py
+        run: |
+          PY="$HOME/jp-venv/bin/python"
+          QUIET_DIR="$HOME/jp-logs" bash quiet.sh jp-probe "$PY" cti_resv_probe.py

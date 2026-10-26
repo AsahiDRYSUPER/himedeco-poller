@@ -39,14 +39,17 @@ jobs:
           REPLY_DRY_RUN: ${{ (github.event_name == 'schedule' || inputs.loop) && 'false' || (inputs.dry_run == false && 'false' || 'true') }}
           LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '55' || '0' }}
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
-        run: bash quiet.sh reply python3 reply_reviews.py
-      - name: Save status
-        if: always()
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}   # 決まり（鍵つき）が開けず自動で返せなかった時だけ知らせる（2026-10-25）
+          TODO_KEY: ${{ secrets.TODO_KEY }}       # 状態（件数）は鍵つきの out/reply_status.enc.json に書く（2026-10-26）
         run: |
-          git config user.name "reply-bot"
-          git config user.email "actions@github.com"
-          git add reply_status.json
-          git diff --cached --quiet || { git commit -m "status" && git push; } || true
+          mkdir -p out
+          bash quiet.sh reply python3 reply_reviews.py
+      - name: 状態を公開（data ブランチの reply_status.enc.json。main にはコミットしない）
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TODO_KEY: ${{ secrets.TODO_KEY }}
+        run: bash publish_data.sh || true
       - name: Chain next run
         if: always() && (github.event_name == 'schedule' || inputs.loop)
         env:

@@ -10,7 +10,7 @@ import time
 LOOP_MIN = int(os.environ.get("LOOP_MINUTES", "0") or 0)
 INTERVAL = 300
 
-# 夜遊びヘブンの「来た時だけ」（2026-10-23 一希さん「夜遊びは来た時だけ」）
+# 夜遊びヘブンの「来た時だけ」
 # 夜遊びの管理画面の通知メールを ntfy の受け口（メールで投稿できる宛先 ntfy-<topic>@ntfy.sh）へ送ってもらい、
 # 5分の待ち時間のあいだ、その受け口を聞いている。メールが届いた瞬間に yoasobi_watch.py を回す。
 # 受け口の名前は YOASOBI_MAIL_TOPIC、無ければ「いつもの通知先 + -mail」。名前はログに出さない。
@@ -116,7 +116,7 @@ while True:
             yoasobi_watch("見回り")
     except Exception as e:
         print("姫デコチャットの見張りに失敗:", type(e).__name__)
-    # 即ヒメの「待機中なのに本当は接客中」を直す（毎回＝約5分おき。一希さん 10/10。失敗してもボードの更新は止めない）
+    # 即ヒメ直し（失敗してもボードの更新は止めない）
     if os.environ.get("CTI_PASSWORD"):
         try:
             subprocess.run([sys.executable, "sokuhime_fix.py"], timeout=600)
@@ -124,7 +124,7 @@ while True:
             print("即ヒメ直しに失敗:", type(e).__name__)
     if r.returncode == 0:
         publish()
-    # 新着んの並び替え（8:00〜翌2:00。並びが変わった時だけ、10分以上あけて7サイトへ送る。一希さん 10/18）。失敗してもボードの更新は止めない。
+    # 新着んの並び替え（決まりは si9_sort.py と鍵つきの設定）。失敗してもボードの更新は止めない。
     # 切り替えは si9_sort.py が main の si9_mode.json を毎回読む。保存・送信をした回は印（out/si9_changed）を残すので、その記録をすぐ公開し直す
     if os.environ.get("SINCHAKUN_ID") and time.time() + 480 < end + INTERVAL:
         try:

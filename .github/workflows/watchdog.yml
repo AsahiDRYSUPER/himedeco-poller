@@ -31,8 +31,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests > /dev/null
+      - run: pip install requests cryptography > /dev/null   # cryptography＝鍵つきの記録（X.enc.json）を開く（2026-10-25）
       - name: 止まっていないかを見る
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TODO_KEY: ${{ secrets.TODO_KEY }}   # dataブランチの si9_status・sokuhime_status は鍵つき（2026-10-25）
+          KNOWLEDGE_KEY: ${{ secrets.KNOWLEDGE_KEY }}   # 見る時間帯・裏姫デコの印の場所は鍵つき（2026-10-26）
         run: bash quiet.sh watchdog python3 watchdog.py ${{ inputs.test && '--test' || '' }} || true

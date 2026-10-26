@@ -3,7 +3,7 @@
 なぜ: cast-mypage は非公開で、GitHub Actions の実行時間に上限がある（無料枠は月2,000分）。
       15分ごとに向こうで見に行く形だと枠を使い切るので、見張りは公開側（このリポジトリ、5分ごと・無料）で行い、
       依頼があった時だけ向こうを起動する。
-鍵:   Secret CAST_MYPAGE_TOKEN（一希さんが GitHub で作った細かい権限のトークン。cast-mypage の Actions 書き込みだけ）。
+鍵:   Secret CAST_MYPAGE_TOKEN（責任者が GitHub で作った細かい権限のトークン。cast-mypage の Actions 書き込みだけ）。
       ログには鍵も返事の中身も出さない。
 """
 import os

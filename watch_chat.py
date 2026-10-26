@@ -1,43 +1,18 @@
-"""姫デコチャットを5分ごとに見張り、キャストから新しい連絡が来たらスマホへ通知する(ntfy)。
-出勤の返事が「日にち＋時間」で揃っていれば、そのまま出勤を上げて本人に「上げました」と返す（shift_auto.py）。
-
-なぜ必要か:
-    姫デコチャットの「返事待ち」は、これまでボードを開いたときにしか分からなかった。
-    連絡に気づくのが遅れると、次回の出勤を出してくれた子を待たせてしまう。
-    出勤は早く上げないと損（予約が入らない）なので、迷いの無い返事は人を待たずに上げる（一希さん 2026-09-24）。
+"""姫デコチャットを見張り、キャストから新しい連絡が来たらスマホへ通知する（ntfy）。
+読み分けて、迷いの無いものは人を待たずに扱う（出勤を上げる・決まった返事を返す・頼みごとを控える）。
+読み分けの決まりは shift_reply.py / reply_rules.py、返事の文は鍵つき。条件付き・曖昧なものは扱わずに通知だけ。
 
 どう判断するか:
-    「そのやりとりの最後の発言がキャストかどうか」で見る。ヘブンの既読フラグ(opened_flg)は、
-    誰かが管理画面でその子のやりとりを開いた時点で立つので、返事をしたかどうかの判断には使えない。
-    出勤の返事は、店が最後に返してから後のキャストの発言をつなげて読む（「26日 12-20時」「お願いします」と分けて送る子がいる）。
-    読み分けの決まりは shift_reply.py（元: 出勤返事の読み方.md）。条件付き・曖昧なものは上げずに通知だけ。
+    「そのやりとりの最後の発言がキャストかどうか」で見る（ヘブンの既読フラグは、誰かが管理画面で開いた時点で立つので使わない）。
+    店が最後に返してから後のキャストの発言をつなげて読む（分けて送る子がいる）。
 
 通知の重複を防ぐ:
-    一度扱ったメッセージのIDを out/chat_seen.json に残し、dataブランチで持ち回る。
+    一度扱ったメッセージのIDを out/chat_seen.json に残し、dataブランチで持ち回る（数字だけ。名前も本文も入れない）。
     初回(まだファイルが無い)は、通知せずに現状をそのまま記録するだけ。
 
-止めたい時: リポジトリの変数 SHIFT_AUTO を off にすると、上げずに通知だけに戻る。
-
-お礼・了解だけの連絡は返さない。出勤の話で日にちか時間が足りない連絡には
-日にちと時間を聞く定型文を返す（reply_rules.py。文は鍵つき）。質問や事情・読み切れない連絡には、
-10分待ってから「確認して、あらためて連絡しますね」とだけ返し、中身は人に見せる（2026-10-05〜）。
-止めたい時はリポジトリの変数 AUTO_REPLY を off。
-
-個室の頼み（2026-10-05〜 一希さん「個室の依頼の場合は、個室の確保までがセット」）:
-    日にち＋時間が揃った返事なら、出勤を上げたあと寮管理表のブース管理表に個室も取る（booth.py）。
-    「出勤申請した時間で個室を」のように時間が無い時は、出勤申請の日と時刻を読んで取る（shift_apply.py。承認はしない）。
-    本人には部屋のことは送らない（当日までに部屋を入れ替えることがあるため）。結果は通知とボードの頼みごとへ。
-
-2026-09-28 から（一希さん「返信していない。今度からはちゃんと返してね」）:
-    出勤予定（日にちだけ・「多分」など）→ 備考に「オキニトークでご確認ください。」を入れて、決まったら返してねと返す
-    声かけへの断り（「来週は難しいです」）→ お礼を返す
-    どちらも、店の直前の発言が出勤の話の時だけ（関係ない話の日付を読み違えないため）。
-
-裏姫デコの依頼（「裏姫デコほしい」）も、ここで見つける。見つけたら非公開の cast-mypage の仕組みを起動して、
-ページを作って本人に送ってもらう（cast_mypage.py。鍵が無ければ通知だけ）。
+止めたい時: リポジトリの変数 SHIFT_AUTO（出勤を上げる）・AUTO_REPLY（決まった返事）を off。
 
 公開リポジトリで動くので、キャスト名やメッセージの中身はログに出さない(出すのは店名と件数だけ)。
-chat_seen.json に入れるのもメッセージのID(ただの数字)だけで、名前も本文も入れない。
 """
 import json
 import os
@@ -54,6 +29,7 @@ from shift_reply import read_shift_reply
 import cast_mypage
 import reply_rules
 import secret_box
+import data_box     # 外国人OKの控え（yoasobi_ok）は鍵つきで dataブランチへ（2026-10-25）
 import requests_log
 import booth
 import shift_apply
@@ -80,34 +56,34 @@ TOP_N = 20                      # 1店舗あたり、上から何人分のやり
 MAX_NOTIFY = 8                  # 1回にスマホへ送る通知の上限(それを超えたらまとめて1通)
 SEEN_KEEP = 400                 # 覚えておくメッセージIDの数
 JOIN_HOURS = 48                 # キャストの続けての発言を、何時間以内ならつなげて読むか
-BOARD_URL = os.environ.get("BOARD_URL", "https://union-boards-4k7q.pages.dev/shops-08eee48153")
+# 通知を押した時に開くボードの場所は鍵つき（heaven_ids の "board_url"）。無ければ通知に Click を付けない（2026-10-26）
+BOARD_URL = (os.environ.get("BOARD_URL") or (secret_box.data("heaven_ids") or {}).get("board_url") or "").strip()
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
 SHIFT_AUTO = os.environ.get("SHIFT_AUTO", "on").strip().lower() not in ("off", "0", "false", "no")
 URAHIME_WORDS = ("裏姫デコ", "うら姫デコ", "ウラ姫デコ", "裏ひめデコ", "裏姫でこ", "裏姫ﾃﾞｺ")
 AUTO_REPLY = os.environ.get("AUTO_REPLY", "on").strip().lower() not in ("off", "0", "false", "no")
-# 個室・迎えなど、出勤を上げるだけでは終わらない頼みごと。人（一希さん）が対応する（2026-09-25 の指摘）
+# 出勤を上げるだけでは終わらない頼みごと。人（担当）が対応する
 LOGISTICS_WORDS = ("個室", "迎え", "送迎", "待機", "寮", "出張")
-# 頼みごとの中身（通知にはっきり書く。待機場所の変更は別のCTIへの入力が要るので人がやる。2026-09-30 一希さん）
+# 頼みごとの中身（通知にはっきり書く）
 LOGISTICS_KINDS = (("待機", "待機場所の変更（CTIへの入力が必要）"), ("個室", "個室（ブース管理表）"),
                    ("迎え", "迎え・送迎"), ("送迎", "迎え・送迎"), ("寮", "寮"), ("出張", "出張"))
-LOGISTICS_REPLY = "個室・迎えの件は確認して連絡するね！"
-# 一希さんが返し方を決める子（キャストID、金庫 NO_AUTO_IDS にカンマ区切り）。この子には何も自動で送らず、通知だけ
+# 返し方を責任者が決める子（キャストID、金庫 NO_AUTO_IDS にカンマ区切り）。この子には何も自動で送らず、通知だけ
 NO_AUTO = {int(x) for x in os.environ.get("NO_AUTO_IDS", "").replace(" ", "").split(",") if x.isdigit()}
 WAIT_MIN = 10                   # 続けて送ってくる途中で返さないよう、最後の発言からこの分数は待つ
 SHIFT_TALK = ("出勤", "出られ", "出れ", "◯日", "シフト")
-# 夜遊びヘブン（外国人向けサイト）の「外国人OK」の申し出（2026-10-22 一希さん「返信が来たら対応できる仕組みまで自動で」）
-# お知らせ「外国人OKと送るだけ」に対する返事。お礼と3つの質問を返し、控え（yoasobi_ok.json。キャストIDと店と時刻だけ）に残す。
-# 掲載・言語・オプションの設定は、その控えをもとに行う。使っているのは4店だけ（一希さん 2026-10-22）。
+# 夜遊びヘブン（外国人向けサイト）の「外国人OK」の申し出
+# 受け付けの定型（鍵つき）を返し、控え（yoasobi_ok.enc.json。キャストIDと店と時刻だけ・鍵つき）に残す。設定はその控えをもとに非公開側で行う。
 YOASOBI_SHOPS = ("cg_kirakira", "s_matikado", "mrs_orange", "potya_reen")
 YOASOBI_OK_RE = re.compile(r"外国人\s*(?:OK|ok|Ok|ＯＫ|おっけ|オッケ|大丈夫|いけます|できます|やります|やってみ)")
 YOASOBI_NOT_AFTER = ("じゃ", "では", "ない", "無理", "ちょっと", "NG", "やめ", "できな", "？", "?", "かな", "ですか", "なの")
 _TX = secret_box.data("reply_texts") or {}   # 定型文は鍵つき（2026-10-25）
 YOASOBI_ASK = _TX.get("yoasobi_ask", "")
 YOASOBI_THANKS = _TX.get("yoasobi_thanks", "")
-# すでに載っている子へのプロフの質問（cast-mypage から1対1で送る文の目印。これが店の直前の発言にあれば、次の返事は答え）
-YOASOBI_PROFILE_MARK = "外国人向けサイト（YOASOBIヘブン）"
-YOASOBI_FILE = OUT_DIR / "yoasobi_ok.json"
+LOGISTICS_REPLY = _TX.get("logistics_reply", "")   # 頼みごとへの一言（今は使っていない。使う時も鍵つきから）
+# 非公開側から1対1で送る質問の文の目印（鍵つき）。これが店の直前の発言にあれば、次の返事は答え。開けない時は目印なし
+YOASOBI_PROFILE_MARK = _TX.get("yoasobi_profile_mark", "")
+YOASOBI_NAME = "yoasobi_ok"   # 控え。鍵つき out/yoasobi_ok.enc.json（2026-10-25〜。cast-mypage の yoasobi-listing が読む）
 
 
 def yoasobi_ok(body: str) -> bool:
@@ -174,8 +150,7 @@ def handle_ai(x, cli):
             pass
         if y.get("wants_listed") and x["shopdir"] in YOASOBI_SHOPS:
             x["yoasobi_listing"] = True
-        # 3つの答えがそろったら、非公開リポジトリ cast-mypage の yoasobi-setup.yml を答えつきで起動する
-        # （掲載・★・Q&A・NG外し・本人への「設定したよ」まで、人がいなくても進む。2026-10-23）
+        # 答えがそろったら、非公開側の設定の仕組み（cast-mypage の yoasobi-setup.yml）を答えつきで起動する（2026-10-23）
         if y.get("is_answer") and y.get("complete") and x["shopdir"] in YOASOBI_SHOPS and sent:
             inputs = {"shop": x["shopdir"], "gid": str(x["gid"]), "name": ai_reply.yobi(x["name"]),
                       "en": str(y.get("lang_en") or "0"), "zh": str(y.get("lang_zh") or "0"), "kr": str(y.get("lang_kr") or "0"),
@@ -193,29 +168,22 @@ def handle_ai(x, cli):
     notify_one(x, auto=("ai", (data, send, sent)))
 
 
-def yoasobi_load():
-    try:
-        if YOASOBI_FILE.exists():
-            return json.loads(YOASOBI_FILE.read_text(encoding="utf-8"))
-        r = requests.get(f"{PUBLIC_RAW}/yoasobi_ok.json?t={int(time.time())}", timeout=30)
-        return r.json() if r.status_code == 200 else {"items": []}
-    except Exception:
-        return {"items": []}
-
-
 def yoasobi_record(x, status):
-    """控えに残す（キャストID・店・時刻・状態だけ。名前も本文も入れない）。"""
-    d = yoasobi_load()
-    items = [it for it in d.get("items", []) if isinstance(it, dict)]
+    """控えに残す（キャストID・店・時刻・状態だけ。名前も本文も入れない）。
+    前の控えが読めない時（有るのに開けない・つながらない）は書かない。空から作り直して上書きしないため（2026-10-26）"""
+    state, d = data_box.read(YOASOBI_NAME, out_dir=OUT_DIR, base=PUBLIC_RAW, timeout=30)
+    if state == "error" or (state == "ok" and not isinstance(d, dict)):
+        print("外国人OKの控えが読めないので、今回は書かない（前の控えを空で上書きしない）")
+        return
+    items = [it for it in ((d or {}).get("items", []) if state == "ok" else []) if isinstance(it, dict)]
     for it in items:
         if it.get("gid") == x["gid"] and it.get("shop") == x["shopdir"]:
             it["status"], it["at"] = status, x["at"]
             break
     else:
         items.append({"gid": x["gid"], "shop": x["shopdir"], "at": x["at"], "status": status})
-    YOASOBI_FILE.write_text(json.dumps({"items": items, "at": datetime.now(JST).isoformat()}, ensure_ascii=False),
-                            encoding="utf-8")
-   # 店の直前の発言が出勤の話かどうか（出勤予定・断りに自動で返す条件）
+    if not data_box.write(YOASOBI_NAME, {"items": items, "at": datetime.now(JST).isoformat()}, OUT_DIR):
+        print("外国人OKの控えを残せなかった（鍵 TODO_KEY が無い）")
 
 
 def clean_name(name: str) -> str:
@@ -322,7 +290,9 @@ def post_ntfy(title, body, extra=None):
     if not NTFY_TOPIC:
         print("通知先が未設定のため、送信は省略しました(NTFY_TOPIC)")
         return
-    h = {"Click": BOARD_URL, "Tags": "speech_balloon", "Title": title}
+    h = {"Tags": "speech_balloon", "Title": title}
+    if BOARD_URL:
+        h["Click"] = BOARD_URL
     h.update(extra or {})
     h = {k: v.encode("utf-8") for k, v in h.items()}
     try:
@@ -397,13 +367,13 @@ def notify_one(x, result=None, urahime=None, auto=None):
             body += "\n\n（お礼・了解のみ。返信は不要と判断）"
             extra = {"Priority": "low"}
         elif what == "hold":
-            body += "\n\n→ 要返信（この子は返し方を一希さんが決める子。自動では何も送っていません）"
+            body += "\n\n→ 要返信（この子は返し方を責任者が決める子。自動では何も送っていません）"
             extra = {"Priority": "high"}
         elif what == "need":
             body += "\n\n→ 要返信（自動では返していません）"
             extra = {"Priority": "high"}
         elif what == "yoasobi_ok":
-            body += ("\n\n🌏 外国人OKの申し出。お礼と3つの質問（写真・話せる言葉・NGのプレイ）を自動で返しました。答えが来たらまた通知します") if ok else \
+            body += ("\n\n🌏 外国人OKの申し出。受け付けの定型を自動で返しました。答えが来たらまた通知します") if ok else \
                     "\n\n！ 外国人OKの申し出ですが、自動の返事が送れませんでした。手で返してください"
             extra = {"Tags": "earth_asia", "Priority": "high"} if ok else {"Tags": "warning", "Priority": "high"}
         elif what == "ai":
@@ -429,8 +399,8 @@ def notify_one(x, result=None, urahime=None, auto=None):
             body += "\n\n🌏 外国人（YOASOBI）の話。定型は返していません。クロードが会話の中で聞き返して返します"
             extra = {"Tags": "earth_asia", "Priority": "high"}
         elif what == "yoasobi_answer":
-            body += ("\n\n🌏 外国人OKの3つの答え。「受け取りました」と自動で返しました。→ 夜遊びヘブンへの掲載と設定は、控え（yoasobi_ok.json）をもとに行います") if ok else \
-                    "\n\n！ 外国人OKの3つの答えですが、自動の返事が送れませんでした。手で返してください"
+            body += ("\n\n🌏 外国人OKの答え。受け取りの定型を自動で返しました。→ 掲載と設定は控え（yoasobi_ok.enc.json）をもとに行います") if ok else \
+                    "\n\n！ 外国人OKの答えですが、自動の返事が送れませんでした。手で返してください"
             extra = {"Tags": "earth_asia", "Priority": "high"}
         elif what == "hold_reply":
             body += ("\n\n→ 読み切れない連絡なので「" + reply_rules.HOLD_TEXT + "」とだけ自動で返しました。中身は手で対応してください") if ok else \
@@ -444,12 +414,12 @@ def notify_one(x, result=None, urahime=None, auto=None):
     elif result is not None:
         extra = {"Tags": "calendar", "Priority": "high"}
         if result["ok"] and r["status"] == "tentative":
-            body += f"\n\n✅ 出勤予定（備考「オキニトークでご確認ください。」）を入れました: {result['detail']}"
-            body += "\n本人に「決まったら返してね」と返信済み" if result["replied"] else \
+            body += f"\n\n✅ 出勤予定（備考）を入れました: {result['detail']}"
+            body += "\n本人に返信済み" if result["replied"] else \
                     "\n！ 返信だけ失敗しました。本人に一言お願いします"
         elif result["ok"]:
             body += f"\n\n✅ 出勤を上げました: {result['detail']}"
-            body += "\n本人に「上げました」と返信済み" if result["replied"] else \
+            body += "\n本人に返信済み" if result["replied"] else \
                     "\n！ 返信だけ失敗しました。本人に一言お願いします"
         else:
             body += f"\n\n✗ 自動で上げられませんでした: {result['detail']}\n→ 手で上げるか、クロードに「{x['name']} {r['hint']} で上げて」と言ってください"
@@ -508,13 +478,13 @@ def main():
     for x in fresh:
         x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS) and x["gid"] not in NO_AUTO
         x["yoasobi"] = yoasobi_ok(x["body"]) and x["gid"] not in NO_AUTO
-        # 3つの質問への答え：店の直前の発言が質問で、相手の発言が「質問返し」でない時だけ（「指名込みですか？」を答え扱いして「受け取りました」を返してしまった 2026-10-22）
+        # 受け付けの質問への答え：店の直前の発言が質問で、相手の発言が「質問返し」でない時だけ（質問返しを答え扱いして受け取りの定型を返してしまった 2026-10-22）
         _q = re.search(r"[？?]\s*$", x["body"]) and len(x["body"]) <= 40
-        # 店の直前の発言が「設定したよ／載せたよ」の報告なら、返事はお礼か感想。答え扱いしない（2026-10-22 ある子の「ありがとう」に「受け取りました」を返した）
+        # 店の直前の発言が「設定したよ／載せたよ」の報告なら、返事はお礼か感想。答え扱いしない（2026-10-22）
         _done = any(w in x.get("prev_shop", "") for w in ("設定したよ", "載せたよ"))
         x["yoasobi_answer"] = (not x["yoasobi"]) and x["gid"] not in NO_AUTO and not _q and not _done and (
-            (bool(YOASOBI_ASK) and YOASOBI_ASK[:14] in x.get("prev_shop", "")) or YOASOBI_PROFILE_MARK in x.get("prev_shop", ""))
-        # 夜遊び（外国人）の話は、定型の「確認して連絡します」を返さず人（クロード・AI）が会話の中で返す（一希さん 2026-10-22）
+            (bool(YOASOBI_ASK) and YOASOBI_ASK[:14] in x.get("prev_shop", "")) or (bool(YOASOBI_PROFILE_MARK) and YOASOBI_PROFILE_MARK in x.get("prev_shop", "")))
+        # 夜遊び（外国人）の話は、定型の返事を返さず AI が会話の中で返す
         # 店の直前の発言が夜遊びの話なら、その続き（「合ってます」「挨拶くらい」など）も同じ扱いにする
         _yw = ("外国人", "YOASOBI", "yoasobi", "Yoasobi", "ヨアソビ", "夜遊び")
         x["yoasobi_topic"] = any(w in x["body"] for w in _yw) or any(w in x.get("prev_shop", "") for w in _yw)
@@ -535,8 +505,8 @@ def main():
         x["apply"] = bool(shift_apply.APPLY_RE.search(x["body"])) and x["read"]["status"] not in ("clear", "partial")
         if x["apply"] and x["kind"] in ("ask_when", "tentative", "decline", "later"):
             x["kind"] = "other"
-        # Claude（AI）で返す：鍵がある時だけ。質問・その他・YOASOBIの話・3つの答え。
-        # 個室・迎えなどの頼みごとと、返し方を一希さんが決める子は今まで通り人へ（2026-10-22）
+        # Claude（AI）で返す：鍵がある時だけ。質問・その他・YOASOBIの話・その答え。
+        # 頼みごとと、返し方を責任者が決める子は今まで通り人へ
         if ai_reply.enabled() and x["kind"] in AI_KINDS and not x["logistics"] and x["gid"] not in NO_AUTO:
             x["kind"] = "ai"
     n_clear = sum(1 for x in fresh if x["read"]["status"] == "clear")
@@ -580,7 +550,7 @@ def main():
                 else:
                     ok = yoasobi_reply(cli, x["shopdir"], x["gid"], YOASOBI_ASK)
                     yoasobi_record(x, "asked" if ok else "reply_failed")
-                    print(f'{x["shop"]}: 外国人OKの受け付け（お礼と3つの質問）を自動送信 {"OK" if ok else "NG"}')
+                    print(f'{x["shop"]}: 外国人OKの受け付けの定型を自動送信 {"OK" if ok else "NG"}')
                     notify_one(x, auto=("yoasobi_ok", ok))
                     x["yoasobi_listing"] = True        # 載せる仕組み（cast-mypage）をあとでまとめて起動する
             elif kind == "yoasobi_topic":
@@ -590,7 +560,7 @@ def main():
                 cli = clis.get(x["shopdir"])
                 ok = bool(cli) and bool(YOASOBI_THANKS) and yoasobi_reply(cli, x["shopdir"], x["gid"], YOASOBI_THANKS)
                 yoasobi_record(x, "answered")
-                print(f'{x["shop"]}: 外国人OKの3つの答えを受け取り、お礼を自動送信 {"OK" if ok else "NG"}')
+                print(f'{x["shop"]}: 外国人OKの答えを受け取り、受け取りの定型を自動送信 {"OK" if ok else "NG"}')
                 notify_one(x, auto=("yoasobi_answer", ok))
             elif kind == "clear" and SHIFT_AUTO:
                 import shift_auto
@@ -598,14 +568,14 @@ def main():
                                         x["read"]["shifts"], now,
                                         tentative=x["read"].get("tentative", ()), display=x["read"].get("display"),
                                         change=x["read"].get("change", False),
-                                        extra_reply="")   # 個室・迎えのことは返事に書かない（一希さん 9/27）。通知で人が対応する
+                                        extra_reply="")   # 頼みごとのことは返事に書かない。通知で人が対応する
                 x["shift_res"] = res
-                # 個室の頼みなら、出勤を上げたあと個室も取る（2026-10-05 一希さん「個室の確保までがセット」）
+                # 個室の頼みなら、出勤を上げたあと個室も取る
                 if res and res.get("ok") and "個室" in x["body"] and booth.enabled(x["shopdir"]) and x["read"]["shifts"]:
                     b = booth.book(x["shopdir"], x["name"], x["read"]["shifts"], booth.pref_of(x["body"]))
                     x["booth_res"] = b
                     print(f'{x["shop"]}: 個室の自動予約 {sum(1 for i in b["items"] if i["ok"])}/{len(b["items"])}')
-                    # 本人には個室のことは送らない（当日までに時間を組み合わせて部屋を入れ替えることがあるため。一希さん 10/5）
+                    # 本人には個室のことは送らない
                 notify_one(x, res)
             elif kind == "ask_when" and AUTO_REPLY:
                 age = now - (when({"create_date": x["at"]}) or now)
@@ -654,7 +624,7 @@ def main():
                     deferred.add(x["id"])          # 続きが来るかもしれないので次の回に回す
                     continue
                 cli = clis.get(x["shopdir"])
-                # 「出勤申請した時間で個室を」→ 申請の日と時刻で個室を取る（2026-10-05 一希さん）。本人には部屋のことは送らない
+                # 「出勤申請した時間で個室を」→ 申請の日と時刻で個室を取る。本人には部屋のことは送らない
                 if x.get("apply") and cli is not None and booth.enabled(x["shopdir"]) and shift_apply.wants_booth(x["body"]):
                     book_from_apply(x, cli, now)
                 if not reply_rules.HOLD_TEXT or reply_rules.HOLD_TEXT[:10] in x.get("prev_shop", "") or cli is None:
@@ -678,7 +648,7 @@ def main():
     # 「外国人OK」の子がいれば、夜遊びヘブンに載せる仕組み（cast-mypage の yoasobi-listing.yml）を1回だけ起動する（2026-10-22）
     if any(x.get("yoasobi_listing") for x in fresh):
         try:
-            # 控え（yoasobi_ok.json）を先に公開してから起動する（向こうはdataブランチの控えを読む）
+            # 控え（yoasobi_ok.enc.json）を先に公開してから起動する（向こうはdataブランチの控えを読む）
             import subprocess
             subprocess.run(["bash", "publish_data.sh"], timeout=120)
         except Exception as e:

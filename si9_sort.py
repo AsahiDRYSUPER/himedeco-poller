@@ -1,26 +1,6 @@
-"""新着ん（si9.jp）の女の子の並び替えを、お店の決まりで自動に保つ（一希さん 2026-10-18「要は脱属人化」）。
-
-いつ：朝 8:00〜翌 2:00、約5分ごと（collect_loop.py の即ヒメ直しのあと）。
-      スタッフが 8:30〜9:00 に来た時にはもう並んでいるように、朝は 8 時の回から並べる（一希さん 10/18）。
-何を：
-  1. ヘブン管理画面の「即ヒメ登録」を読む（店舗IDでHTTP。読むだけ。9:00 より前は読まない）
-  2. CTIの本日スケジュールの「当欠」（即ヒメ直しが読んだものを使う。無ければ自分で読む。読むだけ）
-  3. 新着んにログインして、スケジュール（今日から7日。全員分）と今の並びを読む
-  4. 決まりで並べた案を、まだ7サイトへ送れていない時だけ「並び順の保存」→ 読み直して確かめる →「サイトへ並び替えを更新」→ 7サイト
-     ・前に送ってから10分以上あいている時だけ（新着んの更新結果の画面のいちばん新しい「並び替え」の時刻で確かめる。人が送った分も数える）
-     ・新着んが送っている途中なら何もしない／材料（即ヒメ・CTI・スケジュール）が欠けた回は送らない（並びが行ったり来たりしないように）
-     ・保存したのに送れなかった・サイトで失敗があった時は、同じ並びをもう1回だけ送り直す
-決まり（Addness 98564629-4105-41ba-931a-56f3455199f5）：
-  ① 待機中（即ヒメ「◯◯〜待機中」）：出勤の早い順
-  ② 接客中と出勤前を混ぜて、空く時刻（即ヒメ「次回◯◯〜」。出勤前で表示が無ければ出勤時刻）の早い順
-  ③ 受付終了と、その日の仕事が終わった子：出勤の早い順
-  ④ 今日休みになった子（CTIの「当欠」）
-  ⑤ 今日出勤しない子：先の出勤が上がっている子（近い順）→ 上がっていない子（今の並びのまま）
-  同じ段・同じ時刻の中は、今の並びで上にいる方を先にする（並びが毎回揺れない）。ピン留めの子は今の位置のまま触らない。
-公開リポジトリなので、ログにも記録にも女の子の名前は出さない（人数と段ごとの数だけ）。
-切り替え（毎回読む。走っている途中でも次の回から効く）：main の si9_mode.json
-  {"shops": ["cg_kirakira"], "mode": "send"}   mode: "send"＝保存して送る／"dry"＝案を作って数を出すだけ／"off"＝何もしない
-  読めない時は何もしない。急いで止める時は mode を "off" にする（実行を取り消すだけだと、すぐ次の実行が始まる）
+"""新着ん（si9.jp）の女の子の並びを、店の決まり（鍵つき）に沿って保つ。読む・案を作る・保存して送るの3段。
+店の設定は鍵つき（sealed/ops_si9.enc、正本は非公開側）。開けない時は並び替えをしない。ログ・記録に名前は出さない。
+切り替えは main の si9_mode.json（{"shops": [...], "mode": "send"|"dry"|"off"}。読めない時は何もしない）。
 """
 import hashlib
 import json
@@ -32,33 +12,72 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import data_box     # 記録（si9_status）は鍵つきで dataブランチへ（2026-10-25）
+import secret_box   # 店の設定は鍵つき（2026-10-25）
+
 JST = timezone(timedelta(hours=9))
 BASE = "https://si9.jp"
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
-STATUS_FILE = OUT_DIR / "si9_status.json"     # 名前なし（時刻・人数・送った結果の数）。ボードと次の回が読む
+STATUS_NAME = "si9_status"                    # 記録（時刻・人数・送った結果の数）。鍵つき out/si9_status.enc.json。ボード・見張り・次の回が読む
 CHANGED_FILE = OUT_DIR / "si9_changed"        # 保存・送信をした回の印（collect_loop がすぐ公開し直す）
 PUBLIC_RAW = os.environ.get("PUBLIC_RAW", "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/data")
 # 即ヒメ直しが読んだCTIの当欠（名前を含むので、公開の out/ には置かない。この実行の中だけの置き場）
 CTI_CACHE = Path(os.environ.get("RUNNER_TEMP") or "/tmp") / "cti_people.json"
 CTI_CACHE_MAX_SEC = 15 * 60
 
-# ヘブンの店 → (新着んの「店を選ぶ」画面のリンクの文字（そのまま）, 新着んの店番号 #shop_id)。
-# 動かす店は si9_mode.json の shops で選ぶ（10/18 はキラ学だけ。1日見てから広げる）
-SHOPS = {
-    "cg_kirakira": ("素人専門キラキラ学園", "896"),
-    "undercover": ("ハイブリッド痴女性感UNDER COVER", "895"),
-    "potya_reen": ("ぽちゃりーん", "897"),
-    "s_matikado": ("素人専門 街角レディ", "2525"),
-    "venus_okayama": ("ハイブリットエステVENUS", "3045"),
-    "torori_angel": ("とろ～りAngel", "4326"),
-    "mrs_orange": ("素人ミセス・オレンジな気持ち", "4556"),
-}
 DAY_CUT_H = 6                       # 営業日の区切り：0:00〜5:59 は前の日の続き（24:00〜29:59）
-START_MIN, END_MIN = 8 * 60, 26 * 60  # 動く時間：8:00〜翌2:00
-BOX_FROM = 9 * 60                   # 即ヒメの箱を見るのは 9:00 から（即ヒメ直しと同じ。それより前は誰も待機していない）
-OPEN_MIN = 10 * 60                  # 開店。これより後に即ヒメの箱が0なのはおかしい
-MIN_GAP_SEC = 10 * 60               # 送るのは、前に送ってから10分以上あけて
-MAX_TRIES = 2                       # 同じ並びを送る回数の上限（1回目＋送り直し1回）
+# 子の状態の区分（コードが出すのはこの記号だけ。どの順に並べるかは鍵つきの "order" が決める）
+#   waiting＝即ヒメが待機中 / next＝即ヒメに次回の時刻あり / before＝今日の出勤の前 / now＝出勤中なのに即ヒメに状態が無い
+#   done＝受付終了・今日の出勤の終わりを過ぎた / absent＝CTIの当欠 / later＝今日は出勤なし・先の出勤あり / off＝今日も先も出勤なし
+CLASSES = ("waiting", "next", "before", "now", "done", "absent", "later", "off")
+
+
+def _hm(v):
+    """"07:30" → 450・"25:30" → 1530（翌日は24を足す）。数ならそのまま。読めなければ None"""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    try:
+        h, m = str(v).split(":")
+        return int(h) * 60 + int(m)
+    except Exception:
+        return None
+
+
+def apply_ops(conf):
+    """店の設定と並びの決まり（鍵つき sealed/ops_si9.enc。正本は非公開側）を読み込む。試験では作りものを渡す。
+    shops＝ヘブンの店 → [新着んの「店を選ぶ」画面のリンクの文字, 新着んの店番号]
+    order＝段の並び [[区分, …], …]（同じ段の区分は、区分ごとの並べ方の値で混ぜて並べる）／labels＝区分 → 人数の欄の名前
+    window＝動く時間 [始, 終] ／ open_min＝これより後に即ヒメの箱が0ならおかしい ／ box_from_min＝即ヒメの箱を見始める時刻
+    min_gap_min＝前に送ってからあける分 ／ max_tries＝同じ並びを送る回数の上限"""
+    global SHOPS, ORDER, LABELS, START_MIN, END_MIN, OPEN_MIN, BOX_FROM, MIN_GAP_MIN, MIN_GAP_SEC, MAX_TRIES
+    conf = conf if isinstance(conf, dict) else {}
+    SHOPS = dict(conf.get("shops") or {})
+    ORDER = conf.get("order")
+    LABELS = dict(conf.get("labels") or {})
+    w = conf.get("window")
+    START_MIN, END_MIN = (_hm(w[0]), _hm(w[1])) if isinstance(w, (list, tuple)) and len(w) == 2 else (None, None)
+    OPEN_MIN = _hm(conf.get("open_min"))
+    BOX_FROM = _hm(conf.get("box_from_min")) if conf.get("box_from_min") is not None else START_MIN
+    g = conf.get("min_gap_min")
+    MIN_GAP_MIN = g if isinstance(g, int) and not isinstance(g, bool) and g > 0 else None
+    MIN_GAP_SEC = MIN_GAP_MIN * 60 if MIN_GAP_MIN else None
+    t = conf.get("max_tries")
+    MAX_TRIES = t if isinstance(t, int) and not isinstance(t, bool) and t >= 1 else None
+
+
+def ops_ready():
+    """並びの決まりがそろっているか（区分を1つ残らず1回ずつ並べる・時刻と回数が読める）。そろわなければ並び替えをしない"""
+    if not SHOPS or not isinstance(ORDER, list) or not all(isinstance(st, list) and st for st in ORDER):
+        return False
+    flat = [c for st in ORDER for c in st]
+    if sorted(flat) != sorted(CLASSES):
+        return False
+    return (None not in (START_MIN, END_MIN, OPEN_MIN, BOX_FROM, MIN_GAP_MIN, MAX_TRIES)) and START_MIN < END_MIN
+
+
+apply_ops(secret_box.data("ops_si9") or {})
 SEND_WAIT_SEC = 45                  # 送った後、その場で終わるのを待つ長さ（終わらなければ次の回で結果を確かめる）
 _NAMES = set()     # 読んだ女の子の名前（ログに出す前に伏せる用。外には出さない）
 
@@ -100,7 +119,7 @@ def biz_date(now):
 
 
 def span(s, e=None):
-    """出勤の始まり・終わり（営業日の分）。終わりが無ければ閉店（翌2:00）。終わりが始まり以下なら次の日"""
+    """出勤の始まり・終わり（営業日の分）。終わりが無ければ動く時間の終わり。終わりが始まり以下なら次の日"""
     s = bd(*s.split(":"))
     e = bd(*e.split(":")) if e else END_MIN
     if e <= s:
@@ -140,7 +159,7 @@ TIME_FROM = re.compile(r"(\d{1,2}):(\d{2})\s*[～〜~]")
 
 def parse_standby(html):
     """1人分の箱 → {short: 突き合わせ用の名前, cut: 名前が途中で切れているか, status: waiting/next/closed/none, shift: (始, 終), next: 空く時刻}。
-    箱の作り（10/17 キラ学で確認）：名前＝幅105pxの欄（長い名前は「…」で切れる）・出勤＝colspan の欄「12:00～ 2:00」・
+    箱の作り（10/17 確認）：名前＝幅105pxの欄（長い名前は「…」で切れる）・出勤＝colspan の欄「12:00～ 2:00」・
     状態＝赤い字の欄「16:26～待機中」「次回17:58～」「受付終了」・コメント＝marquee の欄（ここの数字は見ない）"""
     from bs4 import BeautifulSoup
     out = []
@@ -156,7 +175,7 @@ def parse_standby(html):
             if m:
                 shift = span(f"{m.group(1)}:{m.group(2)}", f"{m.group(3)}:{m.group(4)}")
                 break
-            m = TIME_FROM.search(tx)          # 「12:00～ LAST」のように終わりが時刻でない時は、終わり＝閉店
+            m = TIME_FROM.search(tx)          # 「12:00～ LAST」のように終わりが時刻でない時は、終わり＝動く時間の終わり
             if m:
                 shift = span(f"{m.group(1)}:{m.group(2)}")
                 break
@@ -229,16 +248,16 @@ def match_absent(girls, absent, shopdir):
     return ids
 
 
-def decide(girls, week, dates, boxes, absent_ids, now):
-    """決まりで並べた女の子の番号の並びと、段ごとの人数。
+def classify(girls, week, dates, boxes, absent_ids, now):
+    """子ごとの区分と、区分の中で並べる値。返す: {区分: [(並べる値, 番号)]}（ピン留めの子は入れない）。
     girls: 新着んの今の並び [{id, name, fixed}] ／ week: {id: {日付文字: [状態, 始, 終]}}（状態 '2'＝出勤）
-    dates: スケジュールの画面の日付の並び ['2026-10-18', …] ／ boxes: parse_standby の結果（9:00 より前は空）
-    absent_ids: 当欠の子の番号"""
+    dates: スケジュールの画面の日付の並び ['2026-10-18', …] ／ boxes: parse_standby の結果（見始める前は空）
+    absent_ids: 当欠の子の番号。並べる値は (時刻か日数, 時刻, 今の並びの位置) の3つ組（同じ値なら今の並びで上の子が先）"""
     now_bd = biz_minutes(now)
     today = biz_date(now)
     pos = {g["id"]: i for i, g in enumerate(girls)}
     box_of = match_boxes(girls, boxes, working_today(girls, week, today.isoformat())) if boxes else {}
-    G = {k: [] for k in (1, 2, 3, 4, 5, 6)}
+    G = {k: [] for k in CLASSES}
     for g in girls:
         if g.get("fixed"):
             continue
@@ -254,7 +273,7 @@ def decide(girls, week, dates, boxes, absent_ids, now):
             # 箱に状態があるのに出勤の時刻が読めない（取り込み前に足された出勤など）：今日出勤している子として扱う
             shift = (bx.get("since") or now_bd, END_MIN)
         if gid in absent_ids:
-            G[4].append((pos[gid], gid))
+            G["absent"].append(((0, 0, pos[gid]), gid))
             continue
         if shift is None:
             nxt = None
@@ -265,31 +284,43 @@ def decide(girls, week, dates, boxes, absent_ids, now):
                     nxt = ((dd - today).days, bd(*c[1].split(":")) if c[1] else 0)
                     break
             if nxt:
-                G[5].append(((nxt[0], nxt[1], pos[gid]), gid))
+                G["later"].append(((nxt[0], nxt[1], pos[gid]), gid))
             else:
-                G[6].append((pos[gid], gid))
+                G["off"].append(((0, 0, pos[gid]), gid))
             continue
         s, e = shift
         st = bx["status"] if bx else "none"
         if st == "waiting":
-            G[1].append(((s, pos[gid]), gid))
+            G["waiting"].append(((s, 0, pos[gid]), gid))
         elif st == "next" and bx.get("next") is not None:
-            G[2].append(((bx["next"], pos[gid]), gid))
+            G["next"].append(((bx["next"], 0, pos[gid]), gid))
         elif st == "closed" or now_bd >= e:
-            G[3].append(((s, pos[gid]), gid))
+            G["done"].append(((s, 0, pos[gid]), gid))
         elif now_bd < s:
-            G[2].append(((s, pos[gid]), gid))
+            G["before"].append(((s, 0, pos[gid]), gid))
         else:
-            G[2].append(((now_bd, pos[gid]), gid))      # 出勤中なのに即ヒメに状態が無い子は「今」空いている扱い
+            G["now"].append(((now_bd, 0, pos[gid]), gid))      # 「今」空いている扱い
+    return G
+
+
+def decide(girls, week, dates, boxes, absent_ids, now):
+    """鍵つきの決まり（order）で並べた女の子の番号の並びと、欄ごとの人数（欄の名前は鍵つきの labels。無ければ区分の記号）。
+    決まりが開けない時は例外（並び替えをしない）"""
+    if not ops_ready():
+        raise RuntimeError("並びの決まり（鍵つき）が開けない")
+    G = classify(girls, week, dates, boxes, absent_ids, now)
     rest = []
-    for k in (1, 2, 3, 4, 5, 6):
-        rest += [gid for _, gid in sorted(G[k], key=lambda x: x[0])]
+    for stage in ORDER:
+        rest += [gid for _, gid in sorted((x for c in stage for x in G[c]), key=lambda x: x[0])]
     # ピン留めの子は今の位置のまま（先頭に寄せない）。ほかの子でまわりを埋める
     it = iter(rest)
     order = [g["id"] if g.get("fixed") else next(it) for g in girls]
-    counts = {"①待機中": len(G[1]), "②接客中・出勤前": len(G[2]), "③終わった": len(G[3]),
-              "④当欠": len(G[4]), "⑤先の出勤あり": len(G[5]), "⑤先の出勤なし": len(G[6]),
-              "ピン留め": sum(1 for g in girls if g.get("fixed"))}
+    counts = {}
+    for stage in ORDER:
+        for c in stage:
+            lab = LABELS.get(c) or c
+            counts[lab] = counts.get(lab, 0) + len(G[c])
+    counts[LABELS.get("pinned") or "pinned"] = sum(1 for g in girls if g.get("fixed"))
     return order, counts
 
 
@@ -301,6 +332,8 @@ def moved(cur, order):
 
 
 def in_window(now):
+    if START_MIN is None or END_MIN is None:
+        return False
     return START_MIN <= biz_minutes(now) < END_MIN
 
 
@@ -312,7 +345,7 @@ def _ts(iso):
 
 
 def gap_ok(now, *isos):
-    """前に送ってから（送り始めてから）10分以上たったか。記録が無ければ True（本当の確かめは新着んの更新結果の時刻でする）"""
+    """前に送ってから（送り始めてから）決まりの分（鍵つき）以上たったか。記録が無ければ True（本当の確かめは新着んの更新結果の時刻でする）"""
     ts = [t for t in (_ts(i) for i in isos) if t is not None]
     return not ts or (now - max(ts)).total_seconds() >= MIN_GAP_SEC
 
@@ -336,7 +369,7 @@ def someone_sent_after(now, sent_iso, rows):
 def need_send(order, cur, rec):
     """送る必要があるか。返す: (保存も要るか, 送る必要があるか, 理由)。
     新着んに保存した並び＝7サイトにある並び、とは限らない（保存の後に送れずに止まった回がありうる）ので、
-    最後に7サイトへ送れたと確かめた並びの指紋（ok_fp）とくらべる。同じ並びは MAX_TRIES 回まで"""
+    最後に7サイトへ送れたと確かめた並びの指紋（ok_fp）とくらべる。同じ並びは決まりの回数（鍵つき）まで"""
     f = fp(order)
     save = order != cur
     if rec.get("ok_fp") == f:
@@ -368,7 +401,7 @@ def inputs_trouble(boxes, box_err, absent_err, girls, week, now, matched):
 def result_ok(res, n_sites):
     """更新結果が「シティヘブンに届いた」か。返す: (よいか, だめな理由か注意)。
     目的は表ページ（シティヘブン）の並びなので、ヘブンの行が成功なら「送れた」。他のサイトの失敗は注意として残す
-    （10/18 オレンジ：風俗じゃぱん・アンダーナビは新着ん側の設定で全員「失敗」。毎時の更新も前から失敗していて、こちらの送り方の問題ではない）"""
+    （新着ん側の設定で、ほかのサイトがいつも「失敗」になる店がある。こちらの送り方の問題ではない）"""
     if not isinstance(res, dict) or not res or "_" in res:
         return False, str((res or {}).get("_", "結果が無い"))[:60]
     heaven = [k for k in res if "ヘブン" in k]
@@ -387,19 +420,16 @@ def result_ok(res, n_sites):
 
 # ---------- 記録（名前なし） ----------
 def load_status():
+    """手元 → dataブランチ（si9_status.enc.json → 無ければ移行前の si9_status.json）の順"""
     try:
-        if STATUS_FILE.exists():
-            return json.loads(STATUS_FILE.read_text(encoding="utf-8"))
-        import requests
-        r = requests.get(f"{PUBLIC_RAW}/si9_status.json?t={int(time.time())}", timeout=15)
-        return r.json() if r.status_code == 200 else {}
+        v = data_box.load(STATUS_NAME, default={}, out_dir=OUT_DIR, base=PUBLIC_RAW, timeout=15)
+        return v if isinstance(v, dict) else {}
     except Exception:
         return {}
 
 
 def save_status(st):
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    STATUS_FILE.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+    data_box.write(STATUS_NAME, st, OUT_DIR)
 
 
 def mark_changed():
@@ -475,7 +505,7 @@ def si9_login(page, shop_name):
     if page.query_selector("input[name=login_password]"):
         raise RuntimeError("新着んにログインできない（ログイン画面のまま）")
     if "shopSelect" in page.url:
-        # リンクの文字は「素人専門 街角レディ」のように空白の形（半角・全角・改行）が揺れるので、空白を全部外して比べる（10/18 街角で合わなかった）
+        # リンクの文字は空白の形（半角・全角・改行）が揺れるので、空白を全部外して比べる
         ok = page.evaluate("""(t) => { const z = s => (s || '').replace(/[\\s\\u3000]+/g, '');
             const a = Array.from(document.querySelectorAll('a')).find(a => z(a.innerText) === z(t)); if (!a) return false; a.click(); return true; }""", shop_name)
         if not ok:
@@ -688,7 +718,7 @@ def read_results(page, sent_at, rows=None):
     for h, m, site, href in mine[:10]:
         page.goto(href, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(1500)
-        # 詳しい結果の行は <td class="girl_result_label"><a><span class="btn">成功</span>名前</a></td> の形（10/18 VENUSで確認）。
+        # 詳しい結果の行は <td class="girl_result_label"><a><span class="btn">成功</span>名前</a></td> の形（10/18 確認）。
         # innerText では「成功名前」とくっつくので、先頭の言葉で見る
         out[site] = page.evaluate("""() => { const n = {}; const words = ['成功', '失敗', '対象外', 'エラー'];
             const cells = document.querySelectorAll('td.girl_result_label');
@@ -736,8 +766,8 @@ def run_shop(shopdir, now, mode, rec, persist):
     shop_name, shop_no = SHOPS[shopdir]
     rec.update(at=now.isoformat(timespec="seconds"), error="", skipped="")
     if mode == "send" and not gap_ok(now, rec.get("sent_at")):
-        print(f"  {shopdir}: 前に送ってから10分たっていないので、今回は見ない")
-        rec["skipped"] = "前に送ってから10分以内"
+        print(f"  {shopdir}: 前に送ってから{MIN_GAP_MIN}分たっていないので、今回は見ない")
+        rec["skipped"] = f"前に送ってから{MIN_GAP_MIN}分以内"
         return 0
     boxes, box_err = [], ""
     if biz_minutes(now) >= BOX_FROM:
@@ -808,9 +838,9 @@ def run_shop(shopdir, now, mode, rec, persist):
                 print(f"  {shopdir}: 新着んの更新結果が読めない（{rows_err}）ので、今回は送らない")
                 rec["skipped"] = "更新結果が読めない"
                 return 0
-            if rows and minutes_since(now, rows[0][0], rows[0][1]) < MIN_GAP_SEC // 60:
+            if rows and minutes_since(now, rows[0][0], rows[0][1]) < MIN_GAP_MIN:
                 print(f"  {shopdir}: 新着んで{minutes_since(now, rows[0][0], rows[0][1])}分前に並び替えを送っている（人が送った分も含む）ので、今回は送らない")
-                rec["skipped"] = "新着んで10分以内に送っている"
+                rec["skipped"] = f"新着んで{MIN_GAP_MIN}分以内に送っている"
                 return 0
             busy = is_sorting(page)
             if busy is not False:
@@ -829,7 +859,7 @@ def run_shop(shopdir, now, mode, rec, persist):
             sent_at = datetime.now(JST)
             rec.update(sent_at=sent_at.isoformat(timespec="seconds"), sent_fp=f, sent_moved=n_moved, tries={"fp": f, "n": n_try},
                        done=False, result={}, result_error="", sites=0)
-            persist()                            # 送り始めた時刻を先に残す（打ち切られても10分あける）
+            persist()                            # 送り始めた時刻を先に残す（打ち切られても決まりの分あける）
             mark_changed()
             n_sites = send_sites(page, len(girls))
             rec["sites"] = n_sites
@@ -969,6 +999,12 @@ def main():
         now = datetime.fromisoformat(args[args.index("--now") + 1]) if "--now" in args else datetime.now(JST)
         return child_main(shopdir, mode, now)
     now = datetime.now(JST)
+    if not ops_ready():
+        print("新着んの並び替え: 店の設定・並びの決まり（鍵つき）が開けないので並び替えをしない（金庫の KNOWLEDGE_KEY を確かめる）")
+        return 0
+    if not data_box.ready():
+        print("新着んの並び替え: 記録の鍵（TODO_KEY）が無いので並び替えをしない（間をあける判断ができない）")
+        return 0
     try:
         shops, mode = live_config()
     except Exception as e:
@@ -980,7 +1016,7 @@ def main():
         print(f"新着んの並び替え: 止めてある（店 {shops}・mode {mode or 'なし'}）")
         return 0
     if not in_window(now):
-        print(f"新着んの並び替え: 時間外（{now.strftime('%H:%M')}。動くのは 8:00〜翌2:00）")
+        print(f"新着んの並び替え: 動く時間の外（{now.strftime('%H:%M')}）")
         return 0
     print(f"新着んの並び替え（{'送る' if mode == 'send' else '案を作るだけ'}・{len(shops)}店を同時に）")
     try:

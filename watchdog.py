@@ -1,24 +1,28 @@
 """クラウド自動化の見張り（読むだけ）。止まっていたらスマホ（ntfy）へ知らせる。
 
-なぜ: 2026-10-20、非公開リポジトリ cast-mypage の実行時間の枠（月の上限）を使い切り、裏姫デコの更新・送迎ボード・
-      CTIの読み取りが朝から止まっていたのに、女の子に言われるまで誰も気づかなかった。アプリ側の毎朝の確認は、
-      PCを閉じていると動かない。だから見張りは、無料で止まらないこの公開リポジトリに置く。
-見るもの（名前を含まない公開のファイルだけ）:
-  ・https://cast-mypage.pages.dev/updated.json … 裏姫デコ更新の最終時刻（1日2回。15時間以上空いたら異常）
-  ・data ブランチの si9_status.json … 新着んの並び替えの最終時刻（営業時間は10分おき。90分以上空いたら異常）
-知らせ方: 異常の間は JST 9・13・17・21時の回だけ送る（毎時は送らない）。手で動かした時はいつでも送る。
+なぜ: 非公開リポジトリの実行枠が尽きて自動化が止まっても気づけなかったことがあるので、見張りは無料で止まらないこの公開リポジトリに置く。
+見るもの（名前を含まないファイルだけ）:
+  ・裏姫デコ更新の生きている印（場所は鍵つき heaven_ids の "mypage_status_url"。無ければこの見張りは飛ばす）
+  ・data ブランチの si9_status・sokuhime_status … 新着んの並び替え・即ヒメ直しの最終時刻と失敗
+    （2026-10-25〜 鍵つき X.enc.json。鍵は金庫の TODO_KEY。移行のため enc が無ければ平文 X.json を読む）
+    見る時間帯は鍵つきの時間帯の決まり（ops_sokuhime の "hours" の "watch"）。開けない時は見ずに「見られない」と知らせる
+知らせ方: 異常の間は決まった時刻の回だけ送る（毎時は送らない）。手で動かした時はいつでも送る。
 """
-import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
 
 import requests
 
+import data_box
+import ops_hours
+import secret_box
+
 JST = timezone(timedelta(hours=9))
 NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 REPO = os.environ.get("GITHUB_REPOSITORY", "AsahiDRYSUPER/himedeco-poller")
+DATA_RAW = f"https://raw.githubusercontent.com/{REPO}/data"
 ALERT_HOURS = (9, 13, 17, 21)
 
 
@@ -43,28 +47,40 @@ def age_hours(iso):
 
 
 def check_mypage():
-    r = requests.get("https://cast-mypage.pages.dev/updated.json", params={"t": int(datetime.now().timestamp())}, timeout=30)
+    url = ((secret_box.data("heaven_ids") or {}).get("mypage_status_url") or "").strip()
+    if not url:
+        print("裏姫デコ更新: 見る場所（鍵つき）が無いので見ない")
+        return []
+    r = requests.get(url, params={"t": int(datetime.now().timestamp())}, timeout=30)
     r.raise_for_status()
     d = r.json()
     age = age_hours(d.get("updated_at"))
     at = datetime.fromisoformat(d["updated_at"].replace("Z", "+00:00")).astimezone(JST).strftime("%m/%d %H:%M") if age is not None else "?"
-    print(f"裏姫デコ更新: 最終 {at} JST（{age:.1f}時間前） 失敗 {d.get('failed')}/{d.get('total')}")
+    print(f"裏姫デコ更新: 最終 {at} JST" + (f"（{age:.1f}時間前）" if age is not None else ""))
     probs = []
     if age is None or age > 15:
         probs.append(f"裏姫デコの更新が止まっている（最終 {at}）。GitHub Actions の実行枠（Billing）か、失敗ログを確認")
-    elif (d.get("failed") or 0) >= 20:
-        probs.append(f"裏姫デコの更新で失敗が多い（{d.get('failed')}/{d.get('total')}人）。ヘブンがつながりにくい可能性")
+    elif d.get("ok") is False or (d.get("failed") or 0) >= 20:
+        # 失敗の数は出さない（公開の場所に数を書かない）。中身は非公開側の作業記録で見る
+        probs.append("裏姫デコの更新で失敗が多い。ヘブンがつながりにくい可能性")
     return probs
 
 
+def watch_window():
+    """新着ん・即ヒメ直しを見る時間か。決まり（鍵つき）が開けなければ例外（見られないと知らせる）"""
+    w = ops_hours.within("watch")
+    if w is None:
+        raise RuntimeError("見る時間帯の決まり（鍵つき）が開けない")
+    return w
+
+
 def check_si9():
-    now = datetime.now(JST)
-    h = now.hour
-    if not (h >= 9 or h < 2):          # 営業時間（8:00〜翌2:00）の外は見ない。8時台は動き始めなので見ない
+    if not watch_window():             # 見る時間帯の外は見ない（時間帯は鍵つき）
         return []
-    r = requests.get(f"https://raw.githubusercontent.com/{REPO}/data/si9_status.json", params={"t": int(now.timestamp())}, timeout=30)
-    r.raise_for_status()
-    shops = (r.json() or {}).get("shops") or {}
+    state, d = data_box.fetch("si9_status", base=DATA_RAW, timeout=30)
+    if state != "ok":
+        raise RuntimeError(f"si9_status が読めない（{state}）")
+    shops = (d or {}).get("shops") or {}
     recs = [v for v in shops.values() if isinstance(v, dict)]
     ats = [age_hours(v.get("at")) for v in recs if v.get("at")]
     ats = [a for a in ats if a is not None]
@@ -87,20 +103,19 @@ def check_si9():
 
 
 def check_sokuhime():
-    """即ヒメ直し（ヘブンの箱の時間付け）。生きている印 sokuhime_status.json の error と時刻を見る（名前なし）"""
-    now = datetime.now(JST)
-    h = now.hour
-    if not (h >= 9 or h < 2):
+    """即ヒメ直し（ヘブンの箱の時間付け）。生きている印 sokuhime_status の error と時刻を見る（名前なし）"""
+    if not watch_window():
         return []
-    r = requests.get(f"https://raw.githubusercontent.com/{REPO}/data/sokuhime_status.json", params={"t": int(now.timestamp())}, timeout=30)
-    r.raise_for_status()
-    d = r.json() or {}
+    state, d = data_box.fetch("sokuhime_status", base=DATA_RAW, timeout=30)
+    if state != "ok":
+        raise RuntimeError(f"sokuhime_status が読めない（{state}）")
+    d = d or {}
     age = age_hours(d.get("at"))
     print(f"即ヒメ直し: 最終 {age:.2f}時間前・error={d.get('error') or '-'}" if age is not None else "即ヒメ直し: 時刻が読めない")
     if age is None or age > 1.5:
         return ["即ヒメ直しが止まっている（90分以上更新なし）。himedeco-poller の board-collect を確認"]
     if d.get("error"):
-        return [f"即ヒメ直しが失敗している（{str(d.get('error'))[:60]}）。CTIにクラウドから届いているか確認"]
+        return [f"即ヒメ直しが失敗している（{str(d.get('error'))[:60]}）。jp-sokuhime の作業記録を確認"]
     return []
 
 
@@ -111,7 +126,8 @@ def main():
         try:
             probs += fn()
         except Exception as e:
-            probs.append(f"{fn.__name__} を確かめられなかった: {type(e).__name__}")
+            # 自分で投げた理由（RuntimeError）だけは中身も出す（鍵や名前は入らない）
+            probs.append(f"{fn.__name__} を確かめられなかった: {type(e).__name__}" + (f"（{str(e)[:60]}）" if type(e) is RuntimeError else ""))
     now = datetime.now(JST)
     if not probs:
         print("異常なし")

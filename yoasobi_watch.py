@@ -1,17 +1,16 @@
 """夜遊びヘブン（YOASOBI HEAVEN・外国人向けサイト）の多言語チャットを見張る。
 
-なぜ: 外国人のお客さんの問い合わせは、初回返信が5分以内でないと他店へ流れる（ヘブン 2026-10-19）。
-      受付が返しているが、判断が要るもの（値引き・乗り換え）や深夜は止まる。来た時だけ動く仕組みの「読む→分ける→知らせる」の部分。
-      一希さん 2026-10-22「全店の夜遊びヘブンのトリガーを組みたい。見回りでなく来た時だけ反応する仕組み」。
+なぜ: 外国人のお客さんの問い合わせは、初回の返事が遅いと他店へ流れるため。来た時だけ動く仕組みの「読む→分ける→知らせる」の部分。
 
 どう動くか:
     1. 店舗IDでヘブンの管理画面にHTTPでログインし、そのクッキーをブラウザ（Playwright）に渡して
        TravelerLogin（夜遊びの管理画面への入口）→ チャット管理画面（mng.yoasobi-heaven.com、Twilioのチャット）を開く
     2. 会話リストで「自分:」で始まらない行＝お客さんの発言で終わっている＝未返信（ボットの返事も「自分:」になる）
     3. 未返信のスレッドを開いて、店が最後に返してから後のお客さんの発言を読み、
-       A 定型（ホテル・エリア・料金・支払い・入室）／B 判断（予約・指名・日時・変更・値引き）／C 分からない に分ける
+       A 定型／B 判断が要る／C 分からない に分ける（分け方の言葉と定型文は鍵つき）
     4. ntfy で知らせる（Aには定型文の案を添える）。送信は変数 AUTO_YOASOBI=on の時だけ（まだ未実装。最初はoff）
     5. 知らせたスレッドは yoasobi_state.json（スレッドの印と時刻だけ。名前・本文は入れない）に残し、同じものを何度も知らせない
+       （out/ に書き、publish_data.sh で dataブランチへ引き継ぐ。main にはコミットしない。2026-10-26）
 
 公開リポジトリで動くので、お客さんの名前・本文はログに出さない（出すのは店名と件数だけ）。
 """
@@ -50,12 +49,12 @@ def _manual_input(key, env):
 SEND_NAME = _manual_input("send_name", "YOASOBI_SEND_NAME")     # 1通だけ送る時：相手のスレッド名（会話リストの名前）
 SEND_TEXT = _manual_input("send_text", "YOASOBI_SEND_TEXT")
 MNG = "https://mng.yoasobi-heaven.com"
-SHOPS = [s for s in os.environ.get("YOASOBI_SHOPS", "").replace(" ", "").split(",") if s] or ["cg_kirakira"]   # 変数が空なら キラ学（2026-10-23 空で店なしになり見張りが空回りした）
+SHOPS = [s for s in os.environ.get("YOASOBI_SHOPS", "").replace(" ", "").split(",") if s] or ["cg_kirakira"]   # 変数が空でも1店は見る（2026-10-23 空で店なしになり見張りが空回りした）
 LABELS = {"cg_kirakira": "キラ学", "s_matikado": "街角", "mrs_orange": "オレンジ", "potya_reen": "ぽちゃ"}
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 NTFY_HOST = os.environ.get("NTFY_HOST", "https://ntfy.sh").rstrip("/")
 AUTO = os.environ.get("AUTO_YOASOBI", "off").strip().lower() in ("on", "1", "true", "yes")
-# YOASOBIヘブン専用のネット予約（店のカレンダー。会員ログインのあとに開く）。AIは文の中に [予約リンク] と書き、ここで差し替える（2026-10-25 一希さん）
+# YOASOBIヘブン専用のネット予約（店のカレンダー。会員ログインのあとに開く）。AIは文の中に [予約リンク] と書き、ここで差し替える
 YO_DIR = {"cg_kirakira": "kirakira", "s_matikado": "s_matikado", "mrs_orange": "mrs_orange", "potya_reen": "potya_reen"}
 
 
@@ -75,12 +74,10 @@ def avail_text(shopdir):
     if not _AVAIL["loaded"]:
         _AVAIL["loaded"] = True
         try:
-            import base64
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            k = os.environ.get("TODO_KEY", "")
-            enc = requests.get(f"{PUBLIC_RAW}/data/cti_avail.enc.json?t={int(time.time())}", timeout=20).json()
-            raw = AESGCM(base64.b64decode(k)).decrypt(base64.b64decode(enc["iv"]), base64.b64decode(enc["ct"]), None)
-            d = json.loads(raw)
+            import data_box   # 鍵かけは dataブランチの他の記録と同じ部品で（2026-10-25）
+            state, d = data_box.fetch("cti_avail", base=f"{PUBLIC_RAW}/data", timeout=20)
+            if state != "ok" or not isinstance(d, dict):
+                raise RuntimeError(state)
             if datetime.fromisoformat(d["generated_at"]) > datetime.now(JST) - timedelta(minutes=30):
                 _AVAIL["data"] = d                 # 30分より古い写しは使わない（空きを間違えるため）
         except Exception:
@@ -98,7 +95,9 @@ def avail_text(shopdir):
             lines.append(f"- {g['name']}：今日は休み（当欠）")
             continue
         w = g.get("work")
-        work = f"出勤 {hm(w[0])}-{hm(w[1])}（一番早い到着は {hm(w[0] + 30)}）" if w else "出勤の時間不明"
+        # 一番早く着ける時刻の目安（出勤からの分）は鍵つき（yoasobi_templates の "arrive_after_min"）。無ければ書かない
+        arrive = f"（一番早い到着は {hm(w[0] + ARRIVE_AFTER)}）" if (w and ARRIVE_AFTER is not None) else ""
+        work = f"出勤 {hm(w[0])}-{hm(w[1])}{arrive}" if w else "出勤の時間不明"
         busy = "、".join(f"{hm(a)}-{hm(b)}" for a, b in g.get("busy", [])) or "なし"
         lines.append(f"- {g['name']}：{work}／予約で埋まっている時間 {busy}")
     return f"（{d.get('day', '')} の写し）\n" + "\n".join(lines) if lines else ""
@@ -106,12 +105,16 @@ def avail_text(shopdir):
 
 HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じスレッドに送る間隔（分）
 _TX = secret_box.data("yoasobi_templates") or {}   # 定型文と分け方の言葉は鍵つき（sealed/yoasobi_templates.enc）。鍵が無ければ定型は使わず、AIか受付へ（2026-10-25）
-HOLD_TEXT = os.environ.get("YOASOBI_HOLD_TEXT", "").strip() or _TX.get("hold_text") or "メッセージありがとうございます。担当スタッフが確認して、すぐにご連絡いたします。少々お待ちください。"
+HOLD_TEXT = os.environ.get("YOASOBI_HOLD_TEXT", "").strip() or _TX.get("hold_text") or ""   # 空なら送らない
 RENOTIFY_MIN = int(os.environ.get("YOASOBI_RENOTIFY_MIN", "180"))   # 同じ未返信を、何分たったらもう一度知らせるか
-LOOKBACK_DAYS = 3                                                    # 何日前までの未返信を見るか（古いものは返さない。一希さん 10/19）
+LOOKBACK_DAYS = 3                                                    # 何日前までの未返信を見るか（古いものは返さない）
 B_WORDS = tuple(_TX.get("b_words") or ())
 A_WORDS = tuple(_TX.get("a_words") or ())
 TEMPLATES = dict(_TX.get("templates") or {})
+# 定型の案を選ぶ言葉（鍵つき）：[{"words": [...], "keys": [定型の名前, …], "head": 頭に付ける文, "only_if_none": それまでに案が無い時だけ}]
+SUGGEST = [r for r in (_TX.get("suggest") or []) if isinstance(r, dict)]
+_aa = _TX.get("arrive_after_min")
+ARRIVE_AFTER = _aa if isinstance(_aa, int) and not isinstance(_aa, bool) else None
 
 
 def log(*a):
@@ -119,14 +122,13 @@ def log(*a):
 
 
 def load_state():
-    """記録を読み戻す：手元 → dataブランチ（見張りの回）→ main（cronの回）の順。"""
+    """記録を読み戻す：手元 → dataブランチの順（main には置かない。2026-10-26）。"""
     try:
         if STATE.exists():
             return json.loads(STATE.read_text(encoding="utf-8"))
-        for url in (f"{PUBLIC_RAW}/data/yoasobi_state.json", f"{PUBLIC_RAW}/main/yoasobi_state.json"):
-            r = requests.get(f"{url}?t={int(time.time())}", timeout=30)
-            if r.status_code == 200:
-                return r.json()
+        r = requests.get(f"{PUBLIC_RAW}/data/yoasobi_state.json?t={int(time.time())}", timeout=30)
+        if r.status_code == 200:
+            return r.json()
     except Exception:
         pass
     return {"seen": {}}
@@ -166,18 +168,16 @@ def classify(text):
 
 
 def suggest(text):
+    """定型の案（言葉と定型は鍵つき）。開けない時は空"""
     t = (text or "").lower()
     out = []
-    if any(w in t for w in ("倉敷", "遠方", "市外", "アパート", "自宅", "apartment", "my house", "my home")):
-        out.append(TEMPLATES.get("area", ""))
-    if any(w in t for w in ("フロント", "扉", "door", "開けて", "入室", "let you in", "let her in")):
-        out.append(TEMPLATES.get("door", ""))
-    if any(w in t for w in ("料金", "price", "いくら", "how much", "cost", "fee", "charge", "多少钱", "多少錢", "얼마")):
-        out.append(TEMPLATES.get("price", ""))
-    if any(w in t for w in ("支払", "現金", "cash", "credit card", "クレジット", "pay by", "how to pay", "payment", "支付", "付款", "결제")):
-        out.append(TEMPLATES.get("pay", ""))
-    if any(w in t for w in ("ホテル", "hotel", "飯店", "酒店", "호텔")) and not out:
-        out.append("（ホテル名を見て）" + TEMPLATES.get("hotel_ok", "") + "／" + TEMPLATES.get("hotel_ng", ""))
+    for r in SUGGEST:
+        if r.get("only_if_none") and out:
+            continue
+        if any(str(w).lower() in t for w in (r.get("words") or [])):
+            body = "／".join(x for x in (TEMPLATES.get(k, "") for k in (r.get("keys") or [])) if x)
+            if body:
+                out.append(str(r.get("head") or "") + body)
     return out
 
 
@@ -420,13 +420,12 @@ def watch_shop(shopdir, st, now):
                     except Exception as e:
                         sent, how = False, type(e).__name__
                     log(f"{label}: AIの返事を送信 {'OK' if sent else 'NG'}（{how}）")
-                # 判断が要る（B・C）でも、お客さんを待たせない：まず「確認してすぐご連絡します」を返し、中身は受付へ（2026-10-24 一希さん「返信が遅すぎ」。
-                # あるお客さん「車の色とナンバー」「いつ着く」に1時間返事が無かった）。同じスレッドには HOLD_MIN 分に1回まで
+                # 判断が要る（B・C）でも、お客さんを待たせない：まず受け取ったことだけ返し、中身は受付へ。同じスレッドには HOLD_MIN 分に1回まで
                 held = False
                 if not sent and AUTO and cat in ("B", "C") and data.get("action") != "none":
                     hk = "hold:" + tkey(shopdir, r["name"], "")
                     last_hold = st["seen"].get(hk)
-                    if not last_hold or datetime.fromisoformat(last_hold) < now - timedelta(minutes=HOLD_MIN):
+                    if HOLD_TEXT and (not last_hold or datetime.fromisoformat(last_hold) < now - timedelta(minutes=HOLD_MIN)):
                         try:
                             held, how = send_in_thread(chat, HOLD_TEXT)
                         except Exception as e:
@@ -454,9 +453,9 @@ def watch_shop(shopdir, st, now):
                     body += f"\n（AIが使えない：{why}）"
                 if cat == "A":
                     tips = suggest(latest)
-                    body += "\n\n→ 定型で返せそう：\n" + ("\n".join("・" + x for x in tips) if tips else "・（ホテル・エリア・料金・支払いの定型）")
+                    body += "\n\n→ 定型で返せそう：\n" + ("\n".join("・" + x for x in tips) if tips else "・（定型の一覧から）")
                 elif cat == "B":
-                    body += "\n\n→ 判断が要る（予約・指名・日時・変更・値引き）。受付が返す。値引き・乗り換えは卍へ"
+                    body += "\n\n→ 判断が要る。受付が返す。値引き・乗り換えは責任者へ"
                 else:
                     body += "\n\n→ 読み切れない。中身を見て返してください"
                 title = f"🌏 夜遊び {label} 未返信 {cat}"

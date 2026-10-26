@@ -44,14 +44,16 @@ jobs:
           LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.loop) && '57' || '0' }}
           VERIFY_ORDER: ${{ inputs.verify_order && '1' || '' }}
           CITYHEAVEN_SHOP_CREDS: ${{ secrets.CITYHEAVEN_SHOP_CREDS }}
-        run: bash quiet.sh poll python3 poll.py
-      - name: Save status
-        if: always()
+          TODO_KEY: ${{ secrets.TODO_KEY }}   # 状態（件数）は鍵つきの out/status.enc.json に書く（2026-10-26）
         run: |
-          git config user.name "poll-bot"
-          git config user.email "actions@github.com"
-          git add status.json
-          git diff --cached --quiet || { git commit -m "status" && git push; } || true
+          mkdir -p out
+          bash quiet.sh poll python3 poll.py
+      - name: 状態を公開（data ブランチの status.enc.json。main にはコミットしない）
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TODO_KEY: ${{ secrets.TODO_KEY }}
+        run: bash publish_data.sh || true
       - name: Chain next run
         if: always() && (github.event_name == 'schedule' || inputs.loop)
         env:

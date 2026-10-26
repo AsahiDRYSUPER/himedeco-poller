@@ -4,15 +4,13 @@
 ・口コミ返信へのフィードバックらしいメッセージ → お礼を自動返信（2026-09-30 から既定で止めている）
 ・それ以外の未読 → 自動返信せず、件数だけ数える(内容は管理画面で確認する)
 
-2026-09-30 止めた理由: 「返信」「ai」などの言葉だけで決めていたため、とろ〜りの子の
-「私も1回目はAIと気付かずに返信してしまいました…また決まり次第連絡いたしますね！」に
-「ご報告ありがとうございます！確認して、口コミ返信の改善に活かします🙏」と返してしまった（一希さん「この返信はおかしい」）。
+止めた理由: 言葉だけで決めていたため、関係のない連絡にもお礼を返してしまった。
 新しい連絡への返事と通知は watch_chat.py（board-collect）が受け持つ。どうしても使う時はリポジトリ変数 FEEDBACK_ACK=on。
 
 このリポジトリは公開なので、実行ログにキャスト名・メッセージ本文は一切出さない(件数のみ)。
-状態ファイルも持たない: 「相手のメッセージより後に店側の送信があるか」で対応済みかを判定する。
+対応済みかは「相手のメッセージより後に店側の送信があるか」で判定する（前回の記録は持たない）。
+件数だけ鍵つきで out/status.enc.json に書き、ワークフローが dataブランチへ出す（main にはコミットしない）。
 """
-import json
 import os
 import re
 import time
@@ -20,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from heaven_http import BASE, HeavenClient, load_credentials
+import data_box
 
 SHOPS = ["cg_kirakira", "s_matikado", "mrs_orange", "venus_okayama", "potya_reen", "torori_angel", "undercover"]
 DRY_RUN = os.environ.get("REPLY_DRY_RUN", "true").lower() != "false"
@@ -119,8 +118,9 @@ def main() -> int:
     print(f"自動返信: {acked}件 / 人の確認待ち: {escalated}件 / 失敗した店舗: {failed}")
     if VERIFY:
         print(f"上位{TOP_N}件より下で直近24時間に動きがあったトーク: {outside_recent}件")
-    Path("status.json").write_text(
-        json.dumps({"escalated": escalated, "failed_shops": failed}, ensure_ascii=False), encoding="utf-8")
+    # 状態（件数）は鍵つきで dataブランチの status.enc.json へ（公開の場所に数を平文で置かない。main にはコミットしない。2026-10-26）
+    data_box.write("status", {"escalated": escalated, "failed_shops": failed, "at": now.isoformat(timespec="seconds")},
+                   Path(os.environ.get("OUT_DIR", "out")))
     return 1 if failed else 0
 
 

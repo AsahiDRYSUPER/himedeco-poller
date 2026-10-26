@@ -1,8 +1,6 @@
 """キャストからの「頼みごと」（個室・待機場所・迎えなど）を、済むまで店舗状況ボードに残すための記録。
 
-2026-10-01 一希さん：街角のある子の「10/3 12〜20時、個室をおさえてもらえると」で、出勤は自動で上がったが
-個室が取れていなかった（頼みごとはスマホへの通知だけで、一希さんが休みの日に誰も気づかなかった）。
-→ 見つけた頼みごとをここに貯め、ボードの「頼みごと」タブに出す。「済んだ」のチェックは全員で共有。
+頼みごとが通知だけだと見落とされるので、見つけた頼みごとをここに貯め、ボードの「頼みごと」タブに出す。「済んだ」のチェックは全員で共有。
 
 名前を含むので、声かけリストと同じ鍵（TODO_KEY）で暗号化して out/requests.enc.json に置き、
 publish_data.sh が dataブランチへ出す。ログには件数だけを出す（公開リポジトリのため）。
@@ -60,8 +58,9 @@ def save(items):
     iv = os.urandom(12)
     ct = AESGCM(key).encrypt(iv, json.dumps(payload, ensure_ascii=False).encode("utf-8"), None)
     OUT.parent.mkdir(parents=True, exist_ok=True)
+    # 外側には件数を書かない（公開の場所に数を出さない。2026-10-26）
     OUT.write_text(json.dumps({"iv": base64.b64encode(iv).decode(), "ct": base64.b64encode(ct).decode(),
-                               "generated_at": payload["generated_at"], "count": len(items)}), encoding="utf-8")
+                               "generated_at": payload["generated_at"]}), encoding="utf-8")
     return True
 
 

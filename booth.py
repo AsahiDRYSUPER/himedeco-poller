@@ -1,8 +1,8 @@
-"""個室の頼みが来た時に、寮管理表の「ブース管理表」へ自動で入れる（2026-10-05 一希さん「個室の依頼の場合は、個室の確保までがセット」）。
+"""個室の頼みが来た時に、管理表の「ブース管理表」へ自動で入れる。
 
-管理表に入れた Apps Script（ウェブアプリ）を呼ぶ。空いているブースを探して書き込むのは向こうの仕事
-（中身：メイン作業場/projects/キャスト業務の仕組み化/個室の自動予約/Code.gs）。
+管理表に入れた Apps Script（ウェブアプリ）を呼ぶ。空いているブースを探して書き込むのは向こうの仕事（中身は非公開側）。
 鍵つきのURLは金庫 BOOTH_URL。無ければ何もしない（今までどおり通知だけ）。
+希望の場所を読む言葉は鍵つき（sealed/ops_booth.enc の "prefs"）。開けない時も自動では取らない（通知だけ）。
 公開リポジトリなので、ログに名前は出さない。
 """
 import os
@@ -10,8 +10,12 @@ import re
 
 import requests
 
+import secret_box
+
 BOOTH_URL = os.environ.get("BOOTH_URL", "").strip()
-# 管理表の利用者の頭文字（一希さんに教わったもの。とろ〜り＝T・UNDERCOVER＝U は 2026-10-05）
+# 希望の場所の読み方（鍵つき）：[{"words": [...], "value": 管理表に渡す値}]。上から順に見て最初に合ったもの（2026-10-26）
+PREFS = [r for r in ((secret_box.data("ops_booth") or {}).get("prefs") or []) if isinstance(r, dict) and r.get("value")]
+# 管理表の利用者の頭文字（店ごと）
 PREFIX = {"cg_kirakira": "K", "s_matikado": "M", "mrs_orange": "O", "venus_okayama": "V", "potya_reen": "P",
           "torori_angel": "T", "undercover": "U"}
 
@@ -25,16 +29,16 @@ def short_name(name):
 
 
 def pref_of(text):
-    """「1階希望」「3階で」などの希望。無ければ空。"""
-    if re.search(r"(1|１|一)\s*階", text or ""):
-        return "1階"
-    if re.search(r"(3|３|三)\s*階", text or ""):
-        return "3階"
+    """希望の場所（言葉は鍵つき）。無ければ空。空白は無視して比べる"""
+    t = re.sub(r"\s+", "", text or "")
+    for r in PREFS:
+        if any(str(w) and re.sub(r"\s+", "", str(w)) in t for w in (r.get("words") or [])):
+            return str(r["value"])
     return ""
 
 
 def enabled(shopdir):
-    return bool(BOOTH_URL) and shopdir in PREFIX
+    return bool(BOOTH_URL) and bool(PREFS) and shopdir in PREFIX
 
 
 def _hours(hhmm):
@@ -44,7 +48,7 @@ def _hours(hhmm):
 
 def book(shopdir, name, shifts, pref=""):
     """shifts: [(date, "14:00", "26:00"), …]
-    返す: {"ok_all": bool, "items": [{"day": date, "ok": bool, "booth": "A7", "already": bool, "error": "…"}]}"""
+    返す: {"ok_all": bool, "items": [{"day": date, "ok": bool, "booth": "A1", "already": bool, "error": "…"}]}"""
     items = []
     for d, s, e in shifts:
         payload = {"shop": PREFIX[shopdir], "name": short_name(name), "date": d.isoformat(),
@@ -60,7 +64,7 @@ def book(shopdir, name, shifts, pref=""):
 
 
 def summary(res):
-    """「8日 A7・9日 A7・10日 A7」"""
+    """「8日 A1・9日 A1」の形"""
     return "・".join(f'{i["day"].day}日 {i["booth"] if i["ok"] else "取れず（" + (i["error"] or "?") + "）"}' for i in res["items"])
 
 

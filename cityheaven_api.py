@@ -1,7 +1,7 @@
 """
 CityHeaven公式API(http://api.cityheaven.net/)を呼び出す共通モジュール。
 
-一希さんがCityHeavenからもらった公式API仕様書(ヘブンAPI設計)に基づく。
+CityHeavenからもらった公式API仕様書(ヘブンAPI設計)に基づく。
 セッションCookie(ログイン)に依存しないため、Playwrightでの
 ログインセッション切れの問題が発生しない。
 

@@ -1,7 +1,6 @@
-"""共有ボード（店長・スタッフ用）のデータを、5分ごとに集める: 店ごとの出勤人数・目標・不足、次の出勤日、今日声をかける子(暗号化)。
-公開リポジトリ(Actions無料)で動かす。名前など個人の情報は、暗号化した形でしか書き出さない。ログにも名前は出さない。"""
+"""共有ボード（店長・スタッフ用）のデータを集める（店ごとの出勤の数・次の出勤日・声をかける子）。
+公開リポジトリで動くので、書き出すものは鍵つき（data_box.py。2026-10-25〜 shops・kpi_history も）。ログにも名前は出さない。"""
 import base64
-import hashlib
 import json
 import os
 import re
@@ -20,6 +19,7 @@ OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 PUBLIC_RAW = os.environ.get("PUBLIC_RAW", "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/data")
 import secret_box
+import data_box   # dataブランチに出すものの鍵かけ（2026-10-25）
 
 _PUB = json.loads(Path("shops_config.json").read_text(encoding="utf-8"))   # 公開：店の表示名と祝日だけ
 CONFIG = secret_box.data("shops_config") or _PUB                              # 鍵つき：目標人数・ライバル店など（鍵が無ければ公開ぶんだけ）2026-10-25
@@ -292,7 +292,11 @@ def norm(s):
 
 
 def next_shifts(today):
-    """裏姫デコのミミ用: キャストごとの「次の出勤日」。名前は載せず、girl_idのハッシュ(短縮)をキーにする。"""
+    """裏姫デコのミミ用: キャストごとの「次の出勤日」。名前は載せず、キーは girl_id の HMAC（鍵＝TODO_KEY）の頭16文字。
+    2026-10-25 sha256 から HMAC に変えた（girl_id は公開の番号なので、ただのハッシュだと誰の行か当てられる）。
+    鍵が無い時は None を返す（呼ぶ側は今回は書かない）。cast-mypage 側のページも同じ式（data_box.shift_key）にそろえること。"""
+    if not data_box.ready():
+        return None
     out = {}
     for slug, c in CASTS_MAP.items():
         girls = GIRLS_BY_SHOP.get(c["shopdir"])
@@ -300,7 +304,7 @@ def next_shifts(today):
             continue
         g = next((x for x in girls if norm(x["name"]) == norm(c["name"])), None)
         if g is None:
-            out[hashlib.sha256(("shift:" + c["girl_id"]).encode()).hexdigest()[:16]] = {"next": "", "today": False}
+            out[data_box.shift_key(c["girl_id"])] = {"next": "", "today": False}
             continue
         # 日ごとの出勤時間(7日先まではAPIの本体、その先は8日目以降の分)。
         # 出勤時間はヘブンの公開ページにも出ている情報。名前は載せず、キーはgirl_idのハッシュのまま
@@ -317,7 +321,7 @@ def next_shifts(today):
         if isinstance(past, dict):
             for k, v in past.items():
                 times.setdefault(k, v)
-        key = hashlib.sha256(("shift:" + c["girl_id"]).encode()).hexdigest()[:16]
+        key = data_box.shift_key(c["girl_id"])
         row = {"next": nxt, "today": today in work,
                "shifts": {d: times[d] for d in sorted(times) if d >= today}}
         # 過ぎた日が本当に取れている店だけ、月のカレンダー用のデータを出す。
@@ -329,27 +333,27 @@ def next_shifts(today):
 
 
 def save_kpi_history(now, shops):
-    """Addnessの店舗運営KPI用に、その日の「出勤人数」と「次回未提出の人数」を日ごとに残す（店ごとの人数だけ。名前は無い）。
-    5分ごとに今日の分を上書きするので、日付が変わった時点で前の日の分が「日の終わりの値」になる。
-    ヘブンは過ぎた日の出勤を2日前までしか残さないので、ここに残さないと後から記録できない。
+    """KPI用に、日ごとの店別の数を残す（名前は無い。鍵つき kpi_history.enc.json。2026-10-25〜）。
+    今日の分を毎回上書きするので、日付が変わった時点で前の日の分が「日の終わりの値」になる。
+    前の分は 手元 → dataブランチ（enc → 無ければ平文）の順に読む。読めない時・鍵が無い時は今回は書かない（前のものを消さない）。
     ここで失敗しても、ボードのデータ更新は止めない。"""
     try:
-        path = OUT_DIR / "kpi_history.json"
-        hist = None
-        if path.exists():
-            hist = json.loads(path.read_text(encoding="utf-8"))
-        else:
+        if not data_box.ready():
+            print("KPIの履歴: 鍵（TODO_KEY）が無いので、今回は書きません")
+            return
+        found, hist = data_box.read_local("kpi_history", OUT_DIR)
+        if found and hist is None:
+            print("KPIの履歴: 手元の記録を開けなかったので、今回は書きません")
+            return
+        if not found:
             for _ in range(3):
-                try:
-                    r = requests.get(f"{PUBLIC_RAW}/kpi_history.json?t={int(now.timestamp())}", timeout=30)
-                except requests.RequestException:
-                    continue
-                if r.status_code == 200:
-                    hist = r.json()
+                state, hist = data_box.fetch("kpi_history", base=PUBLIC_RAW, timeout=30)
+                if state == "ok":
                     break
-                if r.status_code == 404:   # まだ一度も書いていない
+                if state == "missing":   # まだ一度も書いていない
                     hist = {"days": {}}
                     break
+                hist = None
             if hist is None:
                 print("KPIの履歴を読めなかったので、今回は書きません")
                 return
@@ -370,7 +374,7 @@ def save_kpi_history(now, shops):
         for k in sorted(hist["days"])[:-120]:   # 120日より前は消す
             del hist["days"][k]
         hist["note"] = "日ごとの店別の人数（その日の最後に集めた値）。attendance=出勤人数、no_next=今日出勤で次回未提出の人数"
-        path.write_text(json.dumps(hist, ensure_ascii=False), encoding="utf-8")
+        data_box.write("kpi_history", hist, OUT_DIR, generated_at=now.isoformat(timespec="seconds"))
     except Exception as e:
         print("KPIの履歴を書けませんでした:", type(e).__name__)
 
@@ -411,9 +415,13 @@ def main():
     todo_shops = todo_list(today_s, prev)
     todo_enc = encrypt_todo({"generated_at": now.isoformat(timespec="seconds"), "date": today_s,
                              "shops": todo_shops, "prev": yday})
-    (OUT_DIR / "shops.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    # ボードの店ごとの数は鍵つき（shops.enc.json。ボードは enc を試して無ければ平文を読む。2026-10-25〜）。鍵が無ければ書かない
+    data_box.write("shops", data, OUT_DIR, generated_at=data["generated_at"])
     save_kpi_history(now, shops)
-    (OUT_DIR / "next_shifts.json").write_text(json.dumps(shifts, ensure_ascii=False), encoding="utf-8")
+    if shifts["shifts"] is not None:
+        (OUT_DIR / "next_shifts.json").write_text(json.dumps(shifts, ensure_ascii=False), encoding="utf-8")
+    else:
+        print("次の出勤日: 鍵（TODO_KEY）が無いので、今回は書きません")
     if todo_enc:
         (OUT_DIR / "todo.enc.json").write_text(json.dumps(todo_enc), encoding="utf-8")
         allrows = [r for x in todo_shops for r in x["list"]]

@@ -1,11 +1,10 @@
 """姫デコチャット（女の子）への返事を Claude（Anthropic API）で考える。2026-10-22
 
-なぜ: 決まった言葉に決まった文を返すルールだけでは、意味の取れない連絡に「確認して連絡します」としか返せず、
-      会話が止まっていた（一希さん「意味が分からなければ聞き返して会話の中で確認して」「PCを閉じていても自動で返して」）。
+なぜ: 決まった言葉に決まった文を返すルールだけでは、意味の取れない連絡に返せず、会話が止まっていたため。
 どう動くか: watch_chat.py が「質問・その他・外国人（YOASOBI）の話」と判断した連絡だけを渡す。
-      直近のやりとりと決まり（鍵つきの指示書 sealed/ai_knowledge.enc＋非公開メモ AI_PRIVATE_NOTES）を Claude に渡し、
-      返事の文・送るかどうか・一希さんに知らせることを JSON で受け取る。
-鍵:   Secret ANTHROPIC_API_KEY（一希さんが Claude Console で作って貼る。無ければ何もしない＝今まで通り）。
+      直近のやりとりと決まり（鍵つきの指示書 sealed/ai_knowledge.enc・sealed/ai_rules.enc＋非公開メモ AI_PRIVATE_NOTES）を Claude に渡し、
+      返事の文・送るかどうか・責任者に知らせることを JSON で受け取る。
+鍵:   Secret ANTHROPIC_API_KEY（責任者が Claude Console で作って貼る。無ければ何もしない＝今まで通り）。
 止め方: リポジトリの変数 AI_REPLY を off。モデルは変数 AI_MODEL（既定 claude-opus-5-5）、考える深さは AI_EFFORT（既定 low）。
 公開リポジトリなので、名前・本文・返事の中身はログに出さない（件数と結果の種類だけ）。
 """
@@ -16,10 +15,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import secret_box
+import data_box     # 学んだこと（ai_learned）は鍵つきで dataブランチへ（2026-10-25）
 
 JST = timezone(timedelta(hours=9))
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
-LEARNED_FILE = OUT_DIR / "ai_learned.json"
+LEARNED_NAME = "ai_learned"   # 学んだ一般的な決まり。鍵つき out/ai_learned.enc.json（2026-10-25〜）
 # 指示書は鍵つき（sealed/*.enc、鍵は金庫の KNOWLEDGE_KEY）。開けない時は AI を使わない（2026-10-25）
 PUBLIC_RAW = "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/data"
 
@@ -32,55 +32,17 @@ YOASOBI_SHOPS = ("cg_kirakira", "s_matikado", "mrs_orange", "potya_reen")
 
 _state = {"calls": 0, "disabled": False, "last_error": ""}
 
-LANG = {"type": "string", "enum": ["0", "1", "2", "3", "4"]}
-CAST_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "action": {"type": "string", "enum": ["reply", "reply_and_notify", "notify_only", "no_reply"]},
-        "reply": {"type": "string"},
-        "owner_note": {"type": "string"},
-        "yoasobi": {
-            "type": "object",
-            "properties": {
-                "is_answer": {"type": "boolean"},
-                "complete": {"type": "boolean"},
-                "wants_listed": {"type": "boolean"},
-                "lang_en": LANG, "lang_zh": LANG, "lang_kr": LANG,
-                "ng": {"type": "array", "items": {"type": "string"}},
-                "photo": {"type": "string", "enum": ["same", "hide_eyes", "no_face", "ask_again", "unknown"]},
-                "all_options_ok": {"type": "boolean"},
-                "three_p": {"type": "string", "enum": ["ok", "ng", "unknown"]},
-                "qa": {
-                    "type": "object",
-                    "properties": {"q1": {"type": "string"}, "q2": {"type": "string"}, "q3": {"type": "string"}, "q4": {"type": "string"},
-                                   "q5": {"type": "string"}, "q6": {"type": "string"}, "q7": {"type": "string"}},
-                    "required": ["q1", "q2", "q3", "q4", "q5", "q6", "q7"],
-                    "additionalProperties": False,
-                },
-            },
-            "required": ["is_answer", "complete", "wants_listed", "lang_en", "lang_zh", "lang_kr", "ng", "photo", "all_options_ok", "three_p", "qa"],
-            "additionalProperties": False,
-        },
-        "learned": {"type": "string"},
-    },
-    "required": ["action", "reply", "owner_note", "yoasobi", "learned"],
-    "additionalProperties": False,
-}
+# 返し方の決まり（JSONの欄の意味）と、返させる JSON の形は鍵つき（sealed/ai_rules.enc、正本は非公開側）。開けない時は AI を使わない（2026-10-26）
+_RULES = secret_box.data("ai_rules") or {}
+CAST_RULES = _RULES.get("cast_output_rules") or ""
+CAST_SCHEMA = _RULES.get("cast_schema") or None
+CUSTOMER_RULES = _RULES.get("customer_rules") or ""
+CUSTOMER_SCHEMA = _RULES.get("customer_schema") or None
 
-OUTPUT_RULES = """
-## 返し方（JSONの欄）
-- action：reply＝返事を送る／reply_and_notify＝返事を送って一希さんにも知らせる／notify_only＝送らずに一希さんに知らせるだけ／no_reply＝何もしない
-- reply：女の子に送る文（450字以内）。no_reply・notify_only の時は空
-- owner_note：一希さんに知らせたいこと（短く、名前は入れてよい。知らせることが無ければ空）
-- yoasobi：YOASOBIの3つの質問への答え・外国人OKの申し出が含まれていれば埋める。無関係なら is_answer=false, complete=false, wants_listed=false, 言葉は "0", ng=[], photo="unknown"
-  - complete：①写真 ②言葉 ③NG の3つとも（直近のやりとりも合わせて）分かった時だけ true。true になると、設定を入れる仕組みが自動で動き、本人に「設定したよ」が届く。足りないものがある・聞き返している時は false
-  - ng：女の子の言葉のまま（「ごっくん」「アナル系全て」「口内射精」など）。「なし」「日本人と同じ」「全部OK」なら []
-  - all_options_ok：オプションについて「全部OK／全部できる」と言った時だけ true
-  - three_p：3Pコースを外国人のお客さんにも OK と言ったら "ok"、NG なら "ng"、触れていなければ "unknown"
-  - qa：7問の答え（q1 おすすめの岡山の観光地／q2 おすすめのご飯屋／q3 外国に行ったことがあるか／q4 英会話ができるか／q5 好きなアニメ／q6 好きな音楽／q7 休みの日）。答えがあれば女の子の言葉を整えて短く（30字以内、絵文字なし）。無ければ ""
-  - 7問の答えや「できないオプション」だけが届いた時も is_answer=true。complete は「3つの質問」と「7問」のどちらかがそろえば true でよい（設定の仕組みは入っている分だけ入れる）
-- learned：このやり取りで分かった、今後も使える一般的な決まりがあれば1文（女の子の名前・個人の事情は書かない）。無ければ空
-"""
+
+def rules_ready():
+    """返し方の決まりと JSON の形（鍵つき）がそろっているか"""
+    return bool(CAST_RULES and CUSTOMER_RULES and isinstance(CAST_SCHEMA, dict) and isinstance(CUSTOMER_SCHEMA, dict))
 
 
 def enabled():
@@ -88,8 +50,8 @@ def enabled():
         return False
     if (os.environ.get("AI_REPLY") or "on").strip().lower() in ("off", "0", "false", "no"):
         return False
-    if not secret_box.text("ai_knowledge"):
-        _state["last_error"] = "指示書（鍵つき）が開けない。金庫の KNOWLEDGE_KEY を確かめる"
+    if not secret_box.text("ai_knowledge") or not rules_ready():
+        _state["last_error"] = "指示書・返し方の決まり（鍵つき）が開けない。金庫の KNOWLEDGE_KEY を確かめる"
         return False
     return bool((os.environ.get("ANTHROPIC_API_KEY") or "").strip())
 
@@ -109,12 +71,10 @@ def _clean(t):
 
 
 def load_learned():
+    """手元 → dataブランチ（ai_learned.enc.json → 無ければ移行前の ai_learned.json）の順。読めなければ空"""
     try:
-        if LEARNED_FILE.exists():
-            return json.loads(LEARNED_FILE.read_text(encoding="utf-8")).get("items", [])
-        import requests
-        r = requests.get(f"{PUBLIC_RAW}/ai_learned.json", timeout=20)
-        return r.json().get("items", []) if r.status_code == 200 else []
+        v = data_box.load(LEARNED_NAME, default=None, out_dir=OUT_DIR, base=PUBLIC_RAW, timeout=20)
+        return list(v.get("items", [])) if isinstance(v, dict) else []
     except Exception:
         return []
 
@@ -129,18 +89,23 @@ def save_learned(note, name):
         return
     if re.search(r"[ぁ-んァ-ヶ一-龠]{2,6}(さん|ちゃん)", note):
         return
-    items = load_learned()
+    # 読めなかった（有るのに開けない・つながらない）時は書かない。前の記録を空から作り直して上書きしないため（2026-10-26）
+    state, v = data_box.read(LEARNED_NAME, out_dir=OUT_DIR, base=PUBLIC_RAW, timeout=20)
+    if state == "error" or (state == "ok" and not isinstance(v, dict)):
+        print("AI: 学んだことの記録が読めないので、今回は書かない")
+        return
+    items = [i for i in (v.get("items", []) if state == "ok" else []) if isinstance(i, dict)]
     if note in [i.get("note") for i in items]:
         return
     items.insert(0, {"note": note[:200], "at": datetime.now(JST).strftime("%Y-%m-%d")})
-    LEARNED_FILE.write_text(json.dumps({"items": items[:40]}, ensure_ascii=False), encoding="utf-8")
+    data_box.write(LEARNED_NAME, {"items": items[:40]}, OUT_DIR)
 
 
 def system_prompt():
     know = secret_box.text("ai_knowledge") or ""
     private = (os.environ.get("AI_PRIVATE_NOTES") or "").strip()
     learned = load_learned()[:30]
-    parts = [know, OUTPUT_RULES]
+    parts = [know, CAST_RULES]
     if private:
         parts.append("## 非公開メモ（お店の中の決まり。女の子に聞かれた時だけ使う）\n" + private)
     if learned:
@@ -234,29 +199,7 @@ def _call(system, user, schema):
     return data, "ok"
 
 
-# ---- お客さん（夜遊びヘブンの多言語チャット）向け。2026-10-23 一希さん「送られた時だけ通知が入って、それにAIが反応する」 ----
-CUSTOMER_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "category": {"type": "string", "enum": ["A", "B", "C"]},
-        "action": {"type": "string", "enum": ["reply", "reply_notify", "draft", "none"]},
-        "reply": {"type": "string"},
-        "owner_note": {"type": "string"},
-        "reason": {"type": "string"},
-    },
-    "required": ["category", "action", "reply", "owner_note", "reason"],
-    "additionalProperties": False,
-}
-CUSTOMER_RULES = """
-## 返し方（JSONの欄）
-- category：A＝決まりで答えられる（派遣できるホテルやエリア・料金・支払い・入室の手順・営業時間・サービスの説明・挨拶への返事）／B＝お店の判断が要る（予約の確定・日時・女の子の出勤や指名・値引き・延長・キャンセル・変更・クレーム・住所だけ送ってきた）／C＝読み切れない
-- action：reply＝この文を送ってよい（決まりの中・CTIの写しで答えられる時）／reply_notify＝この文を送ったうえで受付にも知らせる（変更の希望にCTIの空きで答えた時など、受付がCTIを直す・確定する必要がある時）／draft＝下書き（決まりにもCTIの写しにも無いことを含む時。受付が見て送る）／none＝返事は要らない（お礼だけ・ボットのメニュー操作だけ）
-- reply：お客さんへの文（日本語で書く。チャットがお客さんの言葉に自動で訳す。短く、ていねいに、1通で200字以内。絵文字は1つまで）。none の時は空
-- owner_note：受付・一希さんに知らせること（Bの中身の要約、決まりに無い質問、怒っている等。日本語）。無ければ空
-- reason：なぜその category / action か（1文）
-"""
-
-
+# ---- お客さん（夜遊びヘブンの多言語チャット）向け ----
 def customer_prompt():
     know = secret_box.text("yoasobi_knowledge") or ""
     return know + "\n\n" + CUSTOMER_RULES
@@ -315,6 +258,7 @@ def selfcheck():
     print("AI: 鍵", "あり" if (os.environ.get("ANTHROPIC_API_KEY") or "").strip() else "なし",
           "/ 指示書（鍵つき）", "あり" if secret_box.text("ai_knowledge") else "なし",
           "/ お客さん用の指示書", "あり" if secret_box.text("yoasobi_knowledge") else "なし",
+          "/ 返し方の決まり", "あり" if rules_ready() else "なし",
           "/ 非公開メモ", "あり" if (os.environ.get("AI_PRIVATE_NOTES") or "").strip() else "なし",
           "/ モデル", MODEL, "/ 深さ", EFFORT)
     k = os.environ.get("ANTHROPIC_API_KEY") or ""
@@ -329,16 +273,15 @@ def selfcheck():
     if not enabled():
         print("AI: ❌ 動かない（鍵が無いか、AI_REPLY=off か、指示書が開けない）", _state["last_error"] or "")
         return 1
-    data, why = ask("キラキラ学園", "cg_kirakira", "テストさん",
-                    "[10/23 10:00 店] 外国人のお客さんもOKにしてみない？",
-                    "外国人OKでお願いします！英語は挨拶くらいならできます")
+    data, why = ask("試験店", "shop_test", "テストさん",
+                    "[10/23 10:00 店] 試験の連絡です",
+                    "試験の返事です。よろしくお願いします")
     if not data:
         print("AI: ❌", why, "|", _state["last_error"] or "-")
         return 1
     ok, w = check(data)
-    y = data.get("yoasobi") or {}
     print("AI: ✅ つながった / action", data.get("action"), "/ 送れる形", ok, w,
-          "/ 返事", len(data.get("reply") or ""), "字 / 外国人OK", y.get("wants_listed"), "/ 英語★", y.get("lang_en"))
+          "/ 返事", len(data.get("reply") or ""), "字")
     return 0
 
 

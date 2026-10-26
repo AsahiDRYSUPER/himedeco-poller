@@ -1,9 +1,34 @@
-"""新着んの並び替えの決め方と、即ヒメの画面の読み方が壊れていないか（本物には触らない。名前は作りもの）。"""
+"""新着んの並び替えの決め方と、即ヒメの画面の読み方が壊れていないか（本物には触らない。名前は作りもの）。
+並びの決まり・動く時間・あける分・回数は試し用の作りもの（本物は鍵つき sealed/ops_si9.enc。鍵が無くても試験は同じに動く）。"""
 from datetime import datetime
 
 import si9_sort as S
 
 JST = S.JST
+
+# 試し用の決まり（作りもの。本物とは違う並べ方・時刻にしてある）
+FAKE_LABELS = {"waiting": "段1", "now": "段2", "next": "段2", "before": "段3", "absent": "段4", "done": "段5",
+               "off": "段6", "later": "段7", "pinned": "ピン"}
+FAKE = {"shops": {"shop_test": ["試験店", "1"]},
+        "order": [["waiting"], ["now", "next"], ["before"], ["absent"], ["done"], ["off"], ["later"]],
+        "labels": FAKE_LABELS, "window": ["07:30", "25:30"], "open_min": "10:30", "box_from_min": "08:45",
+        "min_gap_min": 7, "max_tries": 3}
+# 決まりが足りない時は「そろっていない」＝並び替えをしない
+S.apply_ops({})
+assert not S.ops_ready() and not S.in_window(datetime(2026, 10, 18, 12, 0, tzinfo=JST))
+S.apply_ops(dict(FAKE, order=[["waiting"], ["now", "next"]]))           # 区分が欠けている
+assert not S.ops_ready()
+S.apply_ops(dict(FAKE, order=FAKE["order"] + [["off"]]))                  # 同じ区分が2回
+assert not S.ops_ready()
+S.apply_ops(dict(FAKE, max_tries=0))
+assert not S.ops_ready()
+try:
+    S.decide([], {}, [], [], set(), datetime(2026, 10, 18, 12, 0, tzinfo=JST))
+    raise AssertionError("決まりが無いのに並べた")
+except RuntimeError:
+    pass
+S.apply_ops(FAKE)
+assert S.ops_ready() and S.START_MIN == 450 and S.END_MIN == 1530 and S.OPEN_MIN == 630 and S.BOX_FROM == 525
 
 
 def at(y, mo, d, h, mi):
@@ -16,17 +41,17 @@ assert S.span("12:00", "2:00") == (720, 1560) and S.span("10:00", "19:00") == (6
 assert S.span("20:00") == (1200, S.END_MIN) and S.span("20:00", "") == (1200, S.END_MIN)
 assert S.biz_date(at(2026, 10, 19, 1, 30)).isoformat() == "2026-10-18"      # 夜中は前の日の続き
 assert S.biz_date(at(2026, 10, 19, 8, 0)).isoformat() == "2026-10-19"
-assert S.in_window(at(2026, 10, 18, 8, 0)) and S.in_window(at(2026, 10, 19, 1, 59))
-assert not S.in_window(at(2026, 10, 18, 7, 59)) and not S.in_window(at(2026, 10, 19, 2, 0)) and not S.in_window(at(2026, 10, 19, 5, 0))
-assert S.gap_ok(at(2026, 10, 18, 17, 10), "2026-10-18T17:00:00+09:00") and not S.gap_ok(at(2026, 10, 18, 17, 9), "2026-10-18T17:00:00+09:00")
-assert S.gap_ok(at(2026, 10, 18, 17, 9), "") and S.gap_ok(at(2026, 10, 18, 17, 9), None)
-assert not S.gap_ok(at(2026, 10, 18, 17, 9), "2026-10-18T16:00:00+09:00", "2026-10-18T17:05:00+09:00")   # どれか1つでも10分以内なら待つ
+assert S.in_window(at(2026, 10, 18, 7, 30)) and S.in_window(at(2026, 10, 19, 1, 29))
+assert not S.in_window(at(2026, 10, 18, 7, 29)) and not S.in_window(at(2026, 10, 19, 1, 30)) and not S.in_window(at(2026, 10, 19, 5, 0))
+assert S.gap_ok(at(2026, 10, 18, 17, 7), "2026-10-18T17:00:00+09:00") and not S.gap_ok(at(2026, 10, 18, 17, 6), "2026-10-18T17:00:00+09:00")
+assert S.gap_ok(at(2026, 10, 18, 17, 6), "") and S.gap_ok(at(2026, 10, 18, 17, 6), None)
+assert not S.gap_ok(at(2026, 10, 18, 17, 9), "2026-10-18T16:00:00+09:00", "2026-10-18T17:05:00+09:00")   # どれか1つでも決まりの分以内なら待つ
 
 # ---------- 名前 ----------
 assert S.norm("試験甲...") == "試験甲" and S.norm("試験乙【新入") == "試験乙" and S.norm("試験丙【業界未経験】") == "試験丙"
 assert S.norm("試ヶ験 丁") == "試ケ験丁" and S.norm("試験戊…") == "試験戊" and S.norm("Ｔｅｓｔ") == "Test"
 
-# ---------- 即ヒメの画面（10/17 キラ学の作りと同じ形。名前は作りもの） ----------
+# ---------- 即ヒメの画面（10/17 に確かめた作りと同じ形。名前は作りもの） ----------
 def box(cls, name, shift, red, comment="", serving=False):
     return (f'<table class="{cls}"><tr><td rowspan="2" style="border: none; padding: 5px;"><img class="sokuhimeimg" src="x.jpg"></td>'
             f'<td style="border: none; width:105px">{name}</td><td style="border: none; vertical-align:top;">新</td></tr>'
@@ -65,13 +90,13 @@ assert S.match_boxes(G2, [{"short": "試験ま", "cut": True}], working={"b"}) =
 assert S.match_boxes(G2, [{"short": "試験ま", "cut": True}], working=set()) == {}
 assert set(S.match_boxes(G2, [{"short": "試験まな", "cut": False}])) == {"a"}   # 「試験まな」は「試験まなみ」に取られない
 assert S.match_boxes(G2, [{"short": "試験ゆい", "cut": False}]) == {}            # いない子の箱は誰にも付かない
-assert S.match_absent(G, [("試験三号,試験三号RSP", "cg_kirakira")], "cg_kirakira") == {"2"}
-assert S.match_absent(G, [("RSP,試験三号", None)], "cg_kirakira") == {"2"}       # 別名のどれでも（完全一致）
-assert S.match_absent(G, [("試験一", "cg_kirakira")], "cg_kirakira") == set()     # 名前の途中までの前方一致は使わない
-assert S.match_absent(G, [("試験桜", "cg_kirakira")], "cg_kirakira") == set()     # 2人に合うので使わない
+assert S.match_absent(G, [("試験三号,試験三号RSP", "shop_test")], "shop_test") == {"2"}
+assert S.match_absent(G, [("RSP,試験三号", None)], "shop_test") == {"2"}       # 別名のどれでも（完全一致）
+assert S.match_absent(G, [("試験一", "shop_test")], "shop_test") == set()     # 名前の途中までの前方一致は使わない
+assert S.match_absent(G, [("試験桜", "shop_test")], "shop_test") == set()     # 2人に合うので使わない
 G3 = [{"id": "k", "name": "試験ゆうか♡"}, {"id": "l", "name": "試験ゆうかりん"}]
-assert S.match_absent(G3, [("試験ゆうか", "cg_kirakira")], "cg_kirakira") == {"k"}   # 残りが記号だけなら合う
-assert S.match_absent(G3, [("試験ゆうか", None)], "cg_kirakira") == set()           # 店の印が無い子は完全一致だけ
+assert S.match_absent(G3, [("試験ゆうか", "shop_test")], "shop_test") == {"k"}   # 残りが記号だけなら合う
+assert S.match_absent(G3, [("試験ゆうか", None)], "shop_test") == set()           # 店の印が無い子は完全一致だけ
 assert S.is_cut("あいう…") and S.is_cut("あいう...") and not S.is_cut("あいう【…") and not S.is_cut("あいう") and not S.is_cut("あいう【新人】")
 
 # ---------- 決め方（2026-10-18 17:00） ----------
@@ -103,10 +128,22 @@ boxes = [
     {"short": "試験十一", "status": "next", "shift": (900, 1380), "since": None, "next": 1050},
     {"short": "試験七号", "status": "waiting", "shift": (720, 1200), "since": 900, "next": None},     # 当欠の子に箱が残っていても当欠
 ]
+# 区分（コードが出すもの）
+cls = {gid: c for c, xs in S.classify(girls, week, D, boxes, {"g7"}, at(2026, 10, 18, 17, 0)).items() for _, gid in xs}
+assert cls == {"g1": "waiting", "g2": "waiting", "g3": "next", "g4": "before", "g5": "done", "g6": "done", "g7": "absent",
+               "g8": "later", "g9": "later", "g10": "off", "g11": "next", "g12": "now"}, cls
+# 並べ方は決まり（作りもの）の order どおり：段1 → 段2（now と next を空く時刻で混ぜる）→ 段3 → 段4 → 段5 → 段6 → 段7
 order, counts = S.decide(girls, week, D, boxes, {"g7"}, at(2026, 10, 18, 17, 0))
-assert order == ["g2", "g1", "g12", "g11", "g3", "g4", "g5", "g6", "g7", "g8", "g9", "g10"], order
-assert counts["①待機中"] == 2 and counts["②接客中・出勤前"] == 4 and counts["③終わった"] == 2 and counts["④当欠"] == 1
-assert counts["⑤先の出勤あり"] == 2 and counts["⑤先の出勤なし"] == 1
+assert order == ["g2", "g1", "g12", "g11", "g3", "g4", "g7", "g5", "g6", "g10", "g8", "g9"], order
+assert counts == {"段1": 2, "段2": 3, "段3": 1, "段4": 1, "段5": 2, "段6": 1, "段7": 2, "ピン": 0}, counts
+assert list(counts) == ["段1", "段2", "段3", "段4", "段5", "段6", "段7", "ピン"]      # 欄は段の順
+# 欄の名前が無い区分は記号のまま
+S.apply_ops(dict(FAKE, labels={}))
+assert set(S.decide(girls, week, D, boxes, {"g7"}, at(2026, 10, 18, 17, 0))[1]) == set(S.CLASSES) | {"pinned"}
+# 決まりの order を変えれば並びも変わる（区分を全部1つの段にすると、並べる値の小さい順）
+S.apply_ops(dict(FAKE, order=[["absent", "off", "later", "done", "before", "now", "next", "waiting"]]))
+assert S.decide(girls, week, D, boxes, {"g7"}, at(2026, 10, 18, 17, 0))[0][:2] == ["g7", "g10"]
+S.apply_ops(FAKE)
 
 # 並べた後にもう一度決めても同じ（毎回揺れない）
 again = [next(g for g in girls if g["id"] == i) for i in order]
@@ -114,8 +151,8 @@ assert S.decide(again, week, D, boxes, {"g7"}, at(2026, 10, 18, 17, 0))[0] == or
 # 同じ時刻の中は、今の並びで上の子が先
 rev = list(reversed(girls))
 o2 = S.decide(rev, week, D, boxes, {"g7"}, at(2026, 10, 18, 17, 0))[0]
-assert o2.index("g6") < o2.index("g5")          # ③ の2人はどちらも10:00出勤 → 今の並びが上の g6 が先
-assert o2[-1] == "g10"
+assert o2.index("g6") < o2.index("g5")          # 段5 の2人はどちらも10:00出勤 → 今の並びが上の g6 が先
+assert o2[-1] == "g9"                            # 最後の段（later）で、先の出勤がいちばん遠い子
 
 # ピン留めの子は今の位置のまま
 pinned = [dict(g) for g in girls]
@@ -124,20 +161,20 @@ o3 = S.decide(pinned, week, D, boxes, {"g7"}, at(2026, 10, 18, 17, 0))[0]
 assert o3[3] == "g4" and sorted(o3) == sorted(g["id"] for g in girls)
 assert [x for x in o3 if x != "g4"] == [x for x in order if x != "g4"]
 
-# 朝 8:30（即ヒメはまだ見ない＝箱なし）：今日の出勤の早い順。終わった子はまだいない
+# 朝 8:30（箱なし）：今日出勤の子は全員「出勤の前」→ 段3 の中で出勤の早い順。終わった子はまだいない
 o4, c4 = S.decide(girls, week, D, [], set(), at(2026, 10, 18, 8, 30))
 assert o4[:9] == ["g2", "g5", "g6", "g1", "g7", "g12", "g11", "g3", "g4"], o4
-assert c4["①待機中"] == 0 and c4["③終わった"] == 0
+assert c4["段1"] == 0 and c4["段3"] == 9 and c4["段5"] == 0
 
 # 夜中 1:00（営業日は 10/18）。画面の列は前の週から足した 10/18 と、10/19 から先
 D2 = ["2026-10-18"] + D[1:]
 o5 = S.decide(girls, week, D2, [{"short": "試験一号", "status": "next", "shift": (720, 1560), "since": None, "next": 1530}],
               set(), at(2026, 10, 19, 1, 0))[0]
-# 出勤中は 1(次回1:30)・4(19:00〜1:00 → 1:00ちょうどで終わり)。g1 が一番上、終わった子は出勤の早い順
+# 出勤中は 1(次回1:30)・4(19:00〜1:00 → 1:00ちょうどで終わり)。g1 が一番上（段2）、終わった子は段5
 assert o5[0] == "g1" and o5.index("g4") > o5.index("g1")
-assert o5.index("g8") > o5.index("g4")           # 明日出勤の子は、今日終わった子より下
+assert o5.index("g8") > o5.index("g4")           # 明日出勤の子（段7）は、今日終わった子（段5）より下
 
-# 箱に状態（待機中）があるのに、出勤がどこにも無い子（取り込み前に足された出勤）→ 今日出勤している子として ① に入る
+# 箱に状態（待機中）があるのに、出勤がどこにも無い子（取り込み前に足された出勤）→ 今日出勤している子として waiting に入る
 w9 = dict(week); w9["g9"] = wk(None, d21=("10:00", "15:00"))
 o9 = S.decide(girls, w9, D, [{"short": "試験九号", "cut": False, "status": "waiting", "shift": None, "since": 1000, "next": None}], set(), at(2026, 10, 18, 17, 0))[0]
 assert o9[0] == "g9"
@@ -145,11 +182,11 @@ assert o9[0] == "g9"
 # ---------- 送らない時の見分け ----------
 T = at(2026, 10, 18, 17, 0)
 assert S.inputs_trouble([], "ConnectionError", "", girls, week, T, 0) == "ヘブンの即ヒメが読めない"
-assert S.inputs_trouble([], "ConnectionError", "", girls, week, at(2026, 10, 18, 8, 30), 0) == ""      # 9時前は即ヒメを見ない
+assert S.inputs_trouble([], "ConnectionError", "", girls, week, at(2026, 10, 18, 8, 30), 0) == ""      # 箱を見始める前（作りもの 8:45）は見ない
 assert S.inputs_trouble(boxes, "", "TimeoutError", girls, week, T, 5) == "CTIの当欠が読めない"
 assert "即ヒメの箱が0" in S.inputs_trouble([], "", "", girls, week, T, 0)
-assert "即ヒメの箱が0" in S.inputs_trouble([], "", "", girls, week, at(2026, 10, 18, 10, 5), 0)      # 開店後は箱が無いとおかしい
-assert S.inputs_trouble([], "", "", girls, week, at(2026, 10, 18, 9, 30), 0) == ""                     # 開店前は箱が無くてもよい
+assert "即ヒメの箱が0" in S.inputs_trouble([], "", "", girls, week, at(2026, 10, 18, 10, 35), 0)     # open_min（作りもの 10:30）の後は箱が無いとおかしい
+assert S.inputs_trouble([], "", "", girls, week, at(2026, 10, 18, 9, 30), 0) == ""                     # その前は箱が無くてもよい
 assert "1つも合わない" in S.inputs_trouble([{"short": "該当なし", "status": "waiting", "shift": None}], "", "", girls, week, T, 0)
 assert "合った子が少ない" in S.inputs_trouble(boxes, "", "", girls, week, T, 2)                        # 箱6つのうち2つしか合わない
 assert S.inputs_trouble(boxes, "", "", girls, week, T, 3) == ""                                        # 半分なら送る
@@ -163,9 +200,9 @@ assert S.need_send(order, cur_ids, {}) == (True, True, "並びが変わった")
 assert S.need_send(cur_ids, cur_ids, {})[1] is True                                    # 一度も送れていない並びは送る
 assert S.need_send(cur_ids, cur_ids, {"ok_fp": f_cur})[1] is False                     # 7サイトに届いた並びは送らない
 assert S.need_send(order, cur_ids, {"ok_fp": f_cur}) == (True, True, "並びが変わった")
-assert S.need_send(cur_ids, cur_ids, {"tries": {"fp": f_cur, "n": 2}})[1] is False     # 同じ並びは2回まで
-assert S.need_send(cur_ids, cur_ids, {"tries": {"fp": f_cur, "n": 1}})[1] is True
-assert S.need_send(order, cur_ids, {"tries": {"fp": f_cur, "n": 2}})[1] is True        # 違う並びなら回数は関係ない
+assert S.need_send(cur_ids, cur_ids, {"tries": {"fp": f_cur, "n": 3}}) == (False, False, "同じ並びを3回送ったので、並びが変わるまで待つ")   # 決まり（作りもの）の回数まで
+assert S.need_send(cur_ids, cur_ids, {"tries": {"fp": f_cur, "n": 2}})[1] is True
+assert S.need_send(order, cur_ids, {"tries": {"fp": f_cur, "n": 3}})[1] is True        # 違う並びなら回数は関係ない
 assert S.result_ok({"シティヘブンネット（A）": {"成功": 10, "対象外": 3}, "B": {"成功": 5}}, 2) == (True, "")
 assert S.result_ok({"シティヘブンネット（A）": {"成功": 10}, "B": {"成功": 5, "失敗": 1}}, 2) == (True, "他サイトで失敗 B")   # ヘブンが成功なら送れた扱い
 assert S.result_ok({"シティヘブンネット（A）": {"失敗": 10}, "B": {"成功": 5}}, 2)[0] is False

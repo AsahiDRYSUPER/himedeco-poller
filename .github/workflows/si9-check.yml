@@ -44,4 +44,4 @@ jobs:
         run: |
           mkdir -p out
           bash quiet.sh si9-sort python3 si9_sort.py
-          if [ "${{ inputs.mode }}" = "send" ] && [ -f out/si9_status.json ]; then bash publish_data.sh; fi
+          if [ "${{ inputs.mode }}" = "send" ] && [ -f out/si9_status.enc.json ]; then bash publish_data.sh; fi

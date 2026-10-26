@@ -1,8 +1,6 @@
 """CTI（風俗CTIv2）の「本日スケジュール」を読む。書くのは「プレイ状況を時間付けにする」だけ（mark_timed）。
 
-なぜ：ヘブンの即ヒメで「待機中なのに、本当は接客中」の子を自動で直すため（一希さん 2026-10-09）。
-      10/10 追加：女子状況が「入室」なのにプレイ状況が「時間付け」でない予約は、ヘブンの終了時刻をCTIの終了時刻に合わせ、
-      CTIのプレイ状況を「時間付け」にして保存する（一希さん）。
+なぜ：ヘブンの即ヒメの表示を、CTIの本日スケジュールに合わせて自動で直すため（決まりは sokuhime_fix.py と鍵つきの設定）。
 どう読むか：人と同じようにブラウザでCTIを開いてログインし（金庫 CTI_LOGIN_URL・CTI_PASSWORD）、
   本日スケジュール（#<事業所>/schedule?date=YYYYMMDD）の画面に出ている
     行（.schedule-row）：女の子の名前（.hime-name）・出勤時間（.work-time 例「10:00-翌3:00Up」）・印（.hime-badge）
@@ -76,7 +74,7 @@ def minutes(t):
     v = int(m.group(2)) * 60 + int(m.group(3))
     if m.group(1):
         v += 24 * 60
-    elif v < 5 * 60:                      # 「2:30」のように翌の印が無い深夜も翌日扱い（営業は10時〜翌2時）
+    elif v < 5 * 60:                      # 「2:30」のように翌の印が無い深夜も翌日扱い
         v += 24 * 60
     return v
 
@@ -120,7 +118,7 @@ def parse(raw):
         LAST_BADGES.update(b for b in r["badges"] if b and len(b) <= 6)
         shop = badge_shop(r["badges"])
         ROW_BADGES.append((shop, tuple(b for b in r["badges"] if not b.startswith("報酬"))))
-        # 出勤時間の末尾「Up」＝その時刻には仕事を終えていたい（上がり）。無ければ受付の締め（一希さん 10/10）
+        # 出勤時間の末尾の「Up」の有無（意味は鍵つきの時間帯の決まりの説明）
         out.append({"shop": shop, "name": r["name"], "work": span(r["work"]), "up": bool(re.search(r"up\s*$", r["work"] or "", re.I)),
                     "absent": "当欠" in r["badges"],          # 当日欠勤（新着んの並び替えで使う）
                     "top": r["top"], "bottom": r["bottom"], "bookings": []})
@@ -144,7 +142,7 @@ def parse(raw):
 
 
 def business_day(now):
-    """営業日は 10時〜翌2時。深夜 0〜5時は前の日のスケジュールを見る。"""
+    """深夜 0〜4時台は前の日のスケジュールを見る。"""
     return now - timedelta(hours=5)
 
 
@@ -286,7 +284,7 @@ class CTI:
         return bb["x"] + bb["width"] * 0.2, bb["y"] + bb["height"] * 0.5
 
     def mark_timed_quick(self, rid, save=True, now=None):
-        """右クリックの簡易窓で、プレイ状況の「時間付け」にチェック → 更新（一希さん 10/10「右クリックで簡易的に変えれる」）。返す: (できたか, メモ)。"""
+        """右クリックの簡易窓で、プレイ状況の「時間付け」にチェック → 更新。返す: (できたか, メモ)。"""
         page = self.page
         if not rid:
             return False, "箱のIDが無い"
@@ -306,7 +304,7 @@ class CTI:
         box.first.evaluate("e => e.scrollIntoView({block: 'center', inline: 'nearest'})")
         page.wait_for_timeout(400)
         shot(page, f"q1_{rid}_closed.png")
-        # 右クリックは、箱の要素に直接「右クリックされた」という出来事を送る（上に赤い線などがかぶっていても届く。一希さん 10/11「箱を右クリックで開けば押せる」）
+        # 右クリックは、箱の要素に直接「右クリックされた」という出来事を送る（上に赤い線などがかぶっていても届く）
         sent = box.first.evaluate("""e => { const r = e.getBoundingClientRect(); const x = r.left + r.width * 0.3, y = r.top + r.height * 0.5;
           const o = {bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 2, buttons: 2};
           e.dispatchEvent(new MouseEvent('mousedown', o)); e.dispatchEvent(new MouseEvent('mouseup', o)); e.dispatchEvent(new MouseEvent('contextmenu', o)); return true; }""")
