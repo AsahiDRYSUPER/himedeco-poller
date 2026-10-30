@@ -106,6 +106,7 @@ def avail_text(shopdir):
 HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じスレッドに送る間隔（分）
 _TX = secret_box.data("yoasobi_templates") or {}   # 定型文と分け方の言葉は鍵つき（sealed/yoasobi_templates.enc）。鍵が無ければ定型は使わず、AIか受付へ（2026-10-25）
 HOLD_TEXT = os.environ.get("YOASOBI_HOLD_TEXT", "").strip() or _TX.get("hold_text") or ""   # 空なら送らない
+SEND_MAX_MIN = int(os.environ.get("YOASOBI_SEND_MAX_MIN", "60"))   # お客さんに自動で送るのは、届いてから何分以内のメッセージか（古いものは知らせるだけ。2026-10-30）
 RENOTIFY_MIN = int(os.environ.get("YOASOBI_RENOTIFY_MIN", "180"))   # 同じ未返信を、何分たったらもう一度知らせるか
 LOOKBACK_DAYS = 3                                                    # 何日前までの未返信を見るか（古いものは返さない）
 B_WORDS = tuple(_TX.get("b_words") or ())
@@ -423,6 +424,8 @@ def watch_shop(shopdir, st, now):
             last = st["seen"].get(k)
             if last and datetime.fromisoformat(last) > now - timedelta(minutes=RENOTIFY_MIN):
                 continue
+            if st["seen"].get("done:" + k):      # 「返事は不要」と決まったメッセージは知らせ直さない（2026-10-30）
+                continue
             text, hist = "", ""
             try:
                 text, hist = read_thread(chat, r["row"])
@@ -430,18 +433,19 @@ def watch_shop(shopdir, st, now):
                 log(f"{label}: スレッドを読めませんでした {type(e).__name__}")
             latest = text or r["preview"]
             age = int((now - r["at"]).total_seconds() // 60)
+            fresh = age <= SEND_MAX_MIN           # 古いメッセージにはお客さんへ何も送らない（2026-10-30 18時間前の会話に受け取りの定型が出た）
             body = f"{r['name']}（{age}分前）\n{latest[:400]}"
             # まず Claude に聞く（決まり＝鍵つきの指示書）。A で決まりの中なら、AUTO_YOASOBI=on の時だけそのまま送る。
             # それ以外は下書きを付けて知らせる。Claude が使えない時は今まで通りの仕分けだけ（2026-10-23）
             data, why = (ai_reply.ask_customer(label, r["name"], hist, latest, avail_text(shopdir)) if ai_reply.enabled() else (None, "off"))
             if data and data.get("reply"):
                 data["reply"] = data["reply"].replace("[予約リンク]", reserve_link(shopdir))
-            sent, title, tried = False, "", False
+            sent, title, tried, no_reply = False, "", False, False
             if data:
                 cat = data.get("category") or "C"
                 can, w2 = ai_reply.check_customer(data)
                 reply = (data.get("reply") or "").strip()
-                if can and AUTO:
+                if can and AUTO and fresh:
                     try:
                         sent, how = send_in_thread(chat, reply)
                     except Exception as e:
@@ -450,7 +454,7 @@ def watch_shop(shopdir, st, now):
                     tried = sent or pressed(how)   # 押した＝確かめが外れても届いているかもしれない。受け取りの定型を重ねない
                 # 判断が要る（B・C）でも、お客さんを待たせない：まず受け取ったことだけ返し、中身は受付へ。同じスレッドには HOLD_MIN 分に1回まで
                 held = False
-                if not sent and not tried and AUTO and cat in ("B", "C") and data.get("action") != "none":
+                if not sent and not tried and AUTO and fresh and cat in ("B", "C") and data.get("action") != "none":
                     hk = "hold:" + tkey(shopdir, r["name"], "")
                     last_hold = st["seen"].get(hk)
                     if HOLD_TEXT and (not last_hold or datetime.fromisoformat(last_hold) < now - timedelta(minutes=HOLD_MIN)):
@@ -472,9 +476,12 @@ def watch_shop(shopdir, st, now):
                     body += f"\n\n→ 返す内容の案：\n{reply or '（無し）'}"
                 elif data.get("action") == "none" and not reply:
                     title, body = f"🌏 夜遊び {label} 返事は不要 {cat}", body + f"\n\n→ {data.get('reason') or ''}"
+                    no_reply = True
                 else:
                     title = f"🌏 夜遊び {label} 未返信 {cat}（AIの下書きあり）"
-                    body += f"\n\n→ AIの下書き（{'お店の判断が要るので送っていない' if not can else '定型・AUTO_YOASOBIがoffなので送っていない' if not AUTO else '送ろうとしたが送れなかった（画面の不具合）'}）：\n{reply or '（無し）'}"
+                    body += f"\n\n→ AIの下書き（{'お店の判断が要るので送っていない' if not can else '定型・AUTO_YOASOBIがoffなので送っていない' if not AUTO else f'届いてから{age}分たっているので送っていない' if not fresh else '送ろうとしたが送れなかった（画面の不具合）'}）：\n{reply or '（無し）'}"
+                if AUTO and not fresh and not can and cat in ("B", "C"):
+                    body += f"\n（届いてから{age}分たっているので、お客さんには受け取りの定型も送っていない）"
                 if data.get("owner_note"):
                     body += f"\n📝 {data['owner_note']}"
             else:
@@ -489,9 +496,11 @@ def watch_shop(shopdir, st, now):
                 else:
                     body += "\n\n→ 読み切れない。中身を見て返してください"
                 title = f"🌏 夜遊び {label} 未返信 {cat}"
-            ok = post_ntfy(title, body, priority=("default" if sent else ("urgent" if age >= 5 else "high")))
+            ok = post_ntfy(title, body, priority=("default" if (sent or no_reply) else ("urgent" if age >= 5 else "high")))
             if ok:
                 st["seen"][k] = now.isoformat()
+                if no_reply:
+                    st["seen"]["done:" + k] = now.isoformat()
                 n_notified[cat] += 1
             try:
                 chat.click("text=会話リスト", timeout=3000)
