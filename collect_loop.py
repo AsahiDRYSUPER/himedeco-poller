@@ -87,9 +87,10 @@ def yoasobi_watch(reason, shop_id=""):
         if sd:
             env["YOASOBI_SHOPS"] = sd         # メールで分かった店だけを見に行く（速く返すため）
         print("夜遊びの見張り:", reason, f"（店 {sd}）" if sd else "")
-        subprocess.run([sys.executable, "yoasobi_watch.py"], timeout=600, env=env)
+        return subprocess.run([sys.executable, "yoasobi_watch.py"], timeout=600, env=env).returncode == 0
     except Exception as _e:
         print("夜遊びの見張りで失敗:", type(_e).__name__)
+        return False
 
 
 def publish():
@@ -99,6 +100,7 @@ def publish():
 
 end = time.time() + LOOP_MIN * 60
 _cycle = 0
+_sweep_due, _sweep_tries = True, 0   # 起動時の見回りがまだ（2026-10-30）
 while True:
     t0 = time.time()
     _cycle += 1
@@ -111,11 +113,17 @@ while True:
     # 姫デコチャットの見張り(新しい連絡があればスマホへ通知)。ここで失敗しても、ボードのデータ更新は止めない
     try:
         subprocess.run([sys.executable, "watch_chat.py"], timeout=900)   # 出勤を上げる時はブラウザ操作で数分かかる
-        # 夜遊びヘブンの多言語チャットの念のための見回り（受け口がある時は約1時間ごと、無い時は10分ごと。2026-10-23）
-        if os.environ.get("YOASOBI_IN_LOOP", "on").lower() not in ("off", "0", "false") and (_cycle % SWEEP == 0):
-            yoasobi_watch("見回り")
     except Exception as e:
         print("姫デコチャットの見張りに失敗:", type(e).__name__)
+    # 夜遊びヘブンの多言語チャットの念のための見回り（受け口がある時は約1時間ごと、無い時は10分ごと。2026-10-23）
+    # 起動した最初の周でも見回る：前の回との切り替わり（毎時の数分）は受け口を聞いていないので、その間のメールを拾う。
+    # 1回の実行は11周で終わるため、12回に1回だけでは一度も回っていなかった。姫デコの見張りが時間切れでも回し、
+    # 見回りが失敗したら次の周でもう一度（1回の実行で3回まで）（2026-10-30）
+    if os.environ.get("YOASOBI_IN_LOOP", "on").lower() not in ("off", "0", "false") and (_sweep_due or _cycle % SWEEP == 0):
+        _ok = yoasobi_watch("見回り")
+        if _sweep_due:
+            _sweep_tries += 1
+            _sweep_due = not _ok and _sweep_tries < 3
     # 即ヒメ直し（失敗してもボードの更新は止めない）
     if os.environ.get("CTI_PASSWORD"):
         try:

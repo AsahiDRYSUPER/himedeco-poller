@@ -254,6 +254,20 @@ MSGS_JS = """() => { const vis = e => !!(e.offsetWidth || e.offsetHeight); const
     const r = e.getBoundingClientRect(); if (r.x < 380) continue;
     out.push({t, x: Math.round(r.x), y: Math.round(r.y)}); }
   return out.slice(-400); }"""
+# 送った文が画面に出たかを数える（左端の会話リストは除く）。MSGS_JS の「最後の400件」に限ると長いスレッドで数がずれるので、全部数える
+COUNT_JS = """(head) => { const vis = e => !!(e.offsetWidth || e.offsetHeight); let n = 0;
+  for (const e of document.querySelectorAll('div, p, span')) { if (!vis(e) || e.children.length > 3) continue;
+    const t = (e.innerText || '').trim().replace(/\\s+/g, ' '); if (!t || t.length > 1200) continue;
+    if (e.getBoundingClientRect().x < 380) continue;
+    if (t.includes(head)) n++; }
+  return n; }"""
+# 送信を押す前に止まった時の印（これ以外は「押した」＝送れているかもしれない）
+NOT_PRESSED = ("入力欄なし", "送信ボタンなし")
+
+
+def pressed(how):
+    """送信を押した（か、押したかもしれない）か。押す前に止まった時だけ False。押したかもしれない時は True＝同じ文を重ねない側に倒す"""
+    return bool(how) and how not in NOT_PRESSED and not str(how).startswith("押す前")
 
 
 def parse_row(t, now):
@@ -321,29 +335,42 @@ def read_thread(chat, row_text):
 def _type_and_send(chat, text):
     """開いているスレッドの入力欄（見えていて readOnly でない textarea。MUI は同じ場所に高さ0の影の textarea もある）に
     本文を入れ、入力欄の右にある送信のアイコンを押す。返す: (送れたか, 押したもの)。2026-10-23 調べた作りに合わせた。"""
-    put = chat.evaluate("""(txt) => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
+    try:
+        put = chat.evaluate("""(txt) => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
         const ta = Array.from(document.querySelectorAll('textarea')).find(t => vis(t) && !t.readOnly && !t.disabled && t.getBoundingClientRect().height > 5);
         if (!ta) return null;
         ta.focus();
         const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
         setter.call(ta, txt); ta.dispatchEvent(new Event('input', {bubbles: true})); ta.dispatchEvent(new Event('change', {bubbles: true}));
         const r = ta.getBoundingClientRect(); return {x: r.x + r.width, y: r.y + r.height / 2, len: ta.value.length}; }""", text)
-    if not put:
-        return False, "入力欄なし"
-    chat.wait_for_timeout(800)
-    how = chat.evaluate("""(pos) => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
+        if not put:
+            return False, "入力欄なし"
+        chat.wait_for_timeout(800)
+        head = re.sub(r"\s+", " ", text)[:20]
+        before = chat.evaluate(COUNT_JS, head)   # 押す前に、同じ文が画面にいくつあるか（前に送った同じ定型も数える）
+    except Exception as e:
+        return False, "押す前に失敗 " + type(e).__name__   # 何も送っていない（ページが落ちた・開き直った等）
+    try:
+        how = chat.evaluate("""(pos) => { const vis = e => !!(e.offsetWidth || e.offsetHeight);
         const btns = Array.from(document.querySelectorAll('button, [role=button], input[type=submit]')).filter(vis);
         let e = btns.find(b => /送信|send/i.test((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.value || '')));
         if (!e) { const near = btns.map(b => { const r = b.getBoundingClientRect(); return {b, dy: Math.abs(r.y + r.height / 2 - pos.y), dx: r.x - pos.x}; })
                     .filter(o => o.dy < 30 && o.dx > -10 && o.dx < 200).sort((a, b) => a.dx - b.dx); e = near.length ? near[0].b : null; }
         if (!e) return null; e.click(); return ((e.innerText || e.getAttribute('aria-label') || e.title || '').trim() || 'icon') + '@' + Math.round(e.getBoundingClientRect().x); }""", put)
+    except Exception as e:
+        return False, "押したか不明 " + type(e).__name__   # 押した後に壊れたかもしれない → 押した側に倒す（同じ文を重ねない）
     if not how:
         return False, "送信ボタンなし"
-    chat.wait_for_timeout(4000)
-    msgs = chat.evaluate(MSGS_JS)
-    head = re.sub(r"\s+", " ", text)[:20]
-    sent = any(head in re.sub(r"\s+", " ", m["t"]) and m["x"] > 800 for m in msgs)
-    return sent, how
+    # 送れたかは「押す前より同じ文が増えたか」で見る。左右の位置（x > 800）で見ていた時は、長い文の吹き出しが左へ広がるため
+    # 送れていても「出ていない」と判定し、受け取りの定型を何度も送っていた（2026-10-30）
+    try:
+        for _ in range(8):
+            chat.wait_for_timeout(1000)
+            if chat.evaluate(COUNT_JS, head) > before:
+                return True, how
+    except Exception as e:
+        return False, f"{how}（確かめで失敗 {type(e).__name__}）"
+    return False, how
 
 
 def send_in_thread(chat, text):
@@ -409,7 +436,7 @@ def watch_shop(shopdir, st, now):
             data, why = (ai_reply.ask_customer(label, r["name"], hist, latest, avail_text(shopdir)) if ai_reply.enabled() else (None, "off"))
             if data and data.get("reply"):
                 data["reply"] = data["reply"].replace("[予約リンク]", reserve_link(shopdir))
-            sent, title = False, ""
+            sent, title, tried = False, "", False
             if data:
                 cat = data.get("category") or "C"
                 can, w2 = ai_reply.check_customer(data)
@@ -418,25 +445,28 @@ def watch_shop(shopdir, st, now):
                     try:
                         sent, how = send_in_thread(chat, reply)
                     except Exception as e:
-                        sent, how = False, type(e).__name__
+                        sent, how = False, "押す前に失敗 " + type(e).__name__
                     log(f"{label}: AIの返事を送信 {'OK' if sent else 'NG'}（{how}）")
+                    tried = sent or pressed(how)   # 押した＝確かめが外れても届いているかもしれない。受け取りの定型を重ねない
                 # 判断が要る（B・C）でも、お客さんを待たせない：まず受け取ったことだけ返し、中身は受付へ。同じスレッドには HOLD_MIN 分に1回まで
                 held = False
-                if not sent and AUTO and cat in ("B", "C") and data.get("action") != "none":
+                if not sent and not tried and AUTO and cat in ("B", "C") and data.get("action") != "none":
                     hk = "hold:" + tkey(shopdir, r["name"], "")
                     last_hold = st["seen"].get(hk)
                     if HOLD_TEXT and (not last_hold or datetime.fromisoformat(last_hold) < now - timedelta(minutes=HOLD_MIN)):
                         try:
                             held, how = send_in_thread(chat, HOLD_TEXT)
                         except Exception as e:
-                            held, how = False, type(e).__name__
+                            held, how = False, "押す前に失敗 " + type(e).__name__
                         log(f"{label}: 「確認してご連絡します」を送信 {'OK' if held else 'NG'}（{how}）")
-                        if held:
+                        if held or pressed(how):   # 押したら印を付ける（確かめが外れても、同じ定型を30分に2度送らない）
                             st["seen"][hk] = now.isoformat()
                 if sent and data.get("action") == "reply_notify":
                     title, body = f"⏰ 夜遊び {label} AIが返しました・受付の対応が要る {cat}", body + f"\n\n→ 送った返事：\n{reply}"
                 elif sent:
                     title, body = f"🤖 夜遊び {label} AIが返しました {cat}", body + f"\n\n→ 送った返事：\n{reply}"
+                elif tried:
+                    title, body = f"⚠ 夜遊び {label} AIの返事を送ったが画面で確かめられない{'・受付の対応が要る' if data.get('action') == 'reply_notify' else ''} {cat}", body + f"\n\n→ 送った返事：\n{reply}"
                 elif held:
                     title = f"⏰ 夜遊び {label} 受付の返事が要る {cat}（お客さんには「確認してすぐご連絡します」を送った）"
                     body += f"\n\n→ 返す内容の案：\n{reply or '（無し）'}"
@@ -444,7 +474,7 @@ def watch_shop(shopdir, st, now):
                     title, body = f"🌏 夜遊び {label} 返事は不要 {cat}", body + f"\n\n→ {data.get('reason') or ''}"
                 else:
                     title = f"🌏 夜遊び {label} 未返信 {cat}（AIの下書きあり）"
-                    body += f"\n\n→ AIの下書き（{'定型・AUTO_YOASOBIがoffなので送っていない' if can else 'お店の判断が要るので送っていない'}）：\n{reply or '（無し）'}"
+                    body += f"\n\n→ AIの下書き（{'お店の判断が要るので送っていない' if not can else '定型・AUTO_YOASOBIがoffなので送っていない' if not AUTO else '送ろうとしたが送れなかった（画面の不具合）'}）：\n{reply or '（無し）'}"
                 if data.get("owner_note"):
                     body += f"\n📝 {data['owner_note']}"
             else:
