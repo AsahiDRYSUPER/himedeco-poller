@@ -103,7 +103,7 @@ def avail_text(shopdir):
     return f"（{d.get('day', '')} の写し）\n" + "\n".join(lines) if lines else ""
 
 
-HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じスレッドに送る間隔（分）
+HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じお客さんに送る間隔（分）（2026-10-31 確認）
 _TX = secret_box.data("yoasobi_templates") or {}   # 定型文と分け方の言葉は鍵つき（sealed/yoasobi_templates.enc）。鍵が無ければ定型は使わず、AIか受付へ（2026-10-25）
 HOLD_TEXT = os.environ.get("YOASOBI_HOLD_TEXT", "").strip() or _TX.get("hold_text") or ""   # 空なら送らない
 SEND_MAX_MIN = int(os.environ.get("YOASOBI_SEND_MAX_MIN", "60"))   # お客さんに自動で送るのは、届いてから何分以内のメッセージか（古いものは知らせるだけ。2026-10-30）
@@ -144,6 +144,23 @@ def save_state(st):
 
 def tkey(shop, name, at):
     return hashlib.sha1(f"{shop}|{name}|{at}".encode("utf-8")).hexdigest()[:12]
+
+
+def send_hold(chat, st, shopdir, name, now, label):
+    """受け取りの定型を送る。同じお客さんには HOLD_MIN 分に1回まで。画面で確かめられたら True。
+    押したら印を付ける（確かめが外れても、同じ定型を重ねない）"""
+    hk = "hold:" + tkey(shopdir, name, "")
+    last_hold = st["seen"].get(hk)
+    if not HOLD_TEXT or (last_hold and datetime.fromisoformat(last_hold) >= now - timedelta(minutes=HOLD_MIN)):
+        return False
+    try:
+        held, how = send_in_thread(chat, HOLD_TEXT)
+    except Exception as e:
+        held, how = False, "押す前に失敗 " + type(e).__name__
+    log(f"{label}: 「確認してご連絡します」を送信 {'OK' if held else 'NG'}（{how}）")
+    if held or pressed(how):
+        st["seen"][hk] = now.isoformat()
+    return held
 
 
 def post_ntfy(title, body, tags="earth_asia", priority="high"):
@@ -452,19 +469,11 @@ def watch_shop(shopdir, st, now):
                         sent, how = False, "押す前に失敗 " + type(e).__name__
                     log(f"{label}: AIの返事を送信 {'OK' if sent else 'NG'}（{how}）")
                     tried = sent or pressed(how)   # 押した＝確かめが外れても届いているかもしれない。受け取りの定型を重ねない
-                # 判断が要る（B・C）でも、お客さんを待たせない：まず受け取ったことだけ返し、中身は受付へ。同じスレッドには HOLD_MIN 分に1回まで
+                # 自分で返せなかった時は、お客さんを黙って待たせない：まず受け取ったことだけ返し、中身は受付へ。
+                # 判断が要る（B・C）だけでなく、AIの答えが送れなかった時（A：長さ・言葉の見張り・画面の不具合）も（2026-10-31）
                 held = False
-                if not sent and not tried and AUTO and fresh and cat in ("B", "C") and data.get("action") != "none":
-                    hk = "hold:" + tkey(shopdir, r["name"], "")
-                    last_hold = st["seen"].get(hk)
-                    if HOLD_TEXT and (not last_hold or datetime.fromisoformat(last_hold) < now - timedelta(minutes=HOLD_MIN)):
-                        try:
-                            held, how = send_in_thread(chat, HOLD_TEXT)
-                        except Exception as e:
-                            held, how = False, "押す前に失敗 " + type(e).__name__
-                        log(f"{label}: 「確認してご連絡します」を送信 {'OK' if held else 'NG'}（{how}）")
-                        if held or pressed(how):   # 押したら印を付ける（確かめが外れても、同じ定型を30分に2度送らない）
-                            st["seen"][hk] = now.isoformat()
+                if not sent and not tried and AUTO and fresh and data.get("action") != "none":
+                    held = send_hold(chat, st, shopdir, r["name"], now, label)
                 if sent and data.get("action") == "reply_notify":
                     title, body = f"⏰ 夜遊び {label} AIが返しました・受付の対応が要る {cat}", body + f"\n\n→ 送った返事：\n{reply}"
                 elif sent:
@@ -488,6 +497,9 @@ def watch_shop(shopdir, st, now):
                 cat = classify(latest)
                 if why not in ("off",):
                     body += f"\n（AIが使えない：{why}）"
+                # AIが使えない時も、判断が要りそうなら受け取ったことだけ返す（2026-10-31）
+                if AUTO and fresh and cat in ("B", "C") and send_hold(chat, st, shopdir, r["name"], now, label):
+                    body += "\n（お客さんには受け取りの定型を送った）"
                 if cat == "A":
                     tips = suggest(latest)
                     body += "\n\n→ 定型で返せそう：\n" + ("\n".join("・" + x for x in tips) if tips else "・（定型の一覧から）")

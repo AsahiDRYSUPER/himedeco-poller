@@ -230,9 +230,10 @@ def check_customer(data):
     reply = (data.get("reply") or "").strip()
     if not reply:
         return False, "返事が空"
-    if len(reply) > 300:
+    if len(re.sub(r"https?://\S+", "", reply)) > 300:   # 予約リンク（200字超）は数えない（2026-10-31）
         return False, "長すぎる"
-    if re.search(r"(割引|値引|discount|free|無料|タダ)", reply, re.I):
+    # 値引きの言葉。free 単独は「空いている」の意味で使われるので止めない（2026-10-31）
+    if re.search(r"(割引|値引|discount|for free|free of charge|無料|タダ)", reply, re.I):
         return False, "値引きの言葉"
     return True, "ok"
 
