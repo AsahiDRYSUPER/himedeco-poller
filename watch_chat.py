@@ -323,6 +323,16 @@ def book_from_apply(x, cli, now):
         print(f'{x["shop"]}: 出勤申請を読めませんでした {type(e).__name__}')
 
 
+def tell_booth_full(x, cli):
+    """個室を頼まれて空きが無かった日は、本人に返事する（2026-11-03）。部屋の場所は当日まで送らない。"""
+    text = booth.full_text(x.get("booth_res"))
+    if not text or cli is None:
+        return
+    import shift_auto
+    x["booth_full_told"] = bool(shift_auto.reply(cli, x["shopdir"], x["gid"], text))
+    print(f'{x["shop"]}: 個室が空いていなかった日を本人へ送信 {"OK" if x["booth_full_told"] else "NG"}')
+
+
 def notify_one(x, result=None, urahime=None, auto=None):
     r = x["read"]
     body = x["body"][:300]
@@ -344,7 +354,8 @@ def notify_one(x, result=None, urahime=None, auto=None):
                     body += "\n→ 承認待ちの申請があります。管理画面の「出勤申請」で承認してください（見張りは承認はしません）"
         if b:
             body += ("\n\n✅ 個室を自動で取りました：" + booth.summary(b)) if b["ok_all"] else \
-                    ("\n\n！ 個室を自動で取りきれませんでした：" + booth.summary(b) + "\n→ 取れなかった日は手で取ってください")
+                    ("\n\n！ 個室を自動で取りきれませんでした：" + booth.summary(b) + "\n→ 取れなかった日は手で取ってください" +
+                     {True: "\n（空きが無かった日は本人に伝えました）", False: "\n！ 空きが無かった日を本人に伝えられませんでした。手で返事してください"}.get(x.get("booth_full_told"), ""))
         if rest:
             body += ("\n\n！ 頼みごとの連絡が来ています：" + "・".join(rest) +
                      "\n→ まだ処理していません。出勤は先に上げます（上げられた時）。この件は手で対応してください" +
@@ -575,7 +586,8 @@ def main():
                     b = booth.book(x["shopdir"], x["name"], x["read"]["shifts"], booth.pref_of(x["body"]))
                     x["booth_res"] = b
                     print(f'{x["shop"]}: 個室の自動予約 {sum(1 for i in b["items"] if i["ok"])}/{len(b["items"])}')
-                    # 本人には個室のことは送らない
+                    # 本人には部屋のことは送らない。空きが無かった日だけ伝える
+                    tell_booth_full(x, clis.get(x["shopdir"]))
                 notify_one(x, res)
             elif kind == "ask_when" and AUTO_REPLY:
                 age = now - (when({"create_date": x["at"]}) or now)
@@ -628,11 +640,13 @@ def main():
                 if x.get("apply") and cli is not None and booth.enabled(x["shopdir"]) and shift_apply.wants_booth(x["body"]):
                     book_from_apply(x, cli, now)
                 if not reply_rules.HOLD_TEXT or reply_rules.HOLD_TEXT[:10] in x.get("prev_shop", "") or cli is None:
+                    tell_booth_full(x, cli)
                     notify_one(x, auto=("need", False))   # 同じ受け取りの返事を二度は送らない
                 else:
                     import shift_auto
                     ok = shift_auto.reply(cli, x["shopdir"], x["gid"], reply_rules.HOLD_TEXT)
                     print(f'{x["shop"]}: 「確認して連絡します」を自動送信 {"OK" if ok else "NG"}')
+                    tell_booth_full(x, cli)
                     notify_one(x, auto=("hold_reply", ok))
             elif not many:
                 notify_one(x, auto=("need", False))

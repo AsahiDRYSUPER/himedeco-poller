@@ -15,6 +15,10 @@ import secret_box
 BOOTH_URL = os.environ.get("BOOTH_URL", "").strip()
 # 希望の場所の読み方（鍵つき）：[{"words": [...], "value": 管理表に渡す値}]。上から順に見て最初に合ったもの（2026-10-26）
 PREFS = [r for r in ((secret_box.data("ops_booth") or {}).get("prefs") or []) if isinstance(r, dict) and r.get("value")]
+# 空きが無くて取れなかった時に本人へ送る文（鍵つき。{days} に「5日・6日」）。無ければ送らない
+FULL_TEXT = (secret_box.data("reply_texts") or {}).get("booth_full", "")
+# 管理表の返事のうち「空きが無い」を表すもの。通信の失敗などは含めない（手で取れるかもしれないので人へ回す）
+FULL_ERRORS = ("full", "full_1f", "no slot")
 # 管理表の利用者の頭文字（店ごと）
 PREFIX = {"cg_kirakira": "K", "s_matikado": "M", "mrs_orange": "O", "venus_okayama": "V", "potya_reen": "P",
           "torori_angel": "T", "undercover": "U"}
@@ -61,6 +65,14 @@ def book(shopdir, name, shifts, pref=""):
         items.append({"day": d, "ok": bool(j.get("ok")), "booth": j.get("booth") or "",
                       "already": bool(j.get("already")), "error": str(j.get("error") or "")})
     return {"ok_all": bool(items) and all(i["ok"] for i in items), "items": items}
+
+
+def full_text(res):
+    """空きが無くて取れなかった日を本人に伝える文（2026-11-03）。その日が無ければ空を返す（呼ぶ側は送らない）"""
+    days = [i["day"] for i in (res or {}).get("items", []) if not i["ok"] and i["error"] in FULL_ERRORS]
+    if not days or not FULL_TEXT:
+        return ""
+    return FULL_TEXT.format(days="・".join(f"{d.day}日" for d in days))
 
 
 def summary(res):
