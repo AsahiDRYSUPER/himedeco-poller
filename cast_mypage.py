@@ -13,10 +13,15 @@ import requests
 
 REPO = "AsahiDRYSUPER/cast-mypage"
 TOKEN = os.environ.get("CAST_MYPAGE_TOKEN", "").strip()
+# 2026-11-02 裏姫デコは廃止（仕組みは残す）。False の間は、チャットの「裏姫デコ」で作成を起動せず、見張り・試験もしない。
+# また始める時は True に戻す（向こう側の戻し方は cast-mypage の README_urahime.md）
+URAHIME_ON = False
 
 
 def dispatch(workflow="urahime-auto.yml", ref="main", inputs=None):
     """向こうのワークフローを起動する。返す: (できたか, 短い説明)"""
+    if workflow == "urahime-auto.yml" and not URAHIME_ON:
+        return False, "裏姫デコは止めている"
     if not TOKEN:
         return False, "鍵（CAST_MYPAGE_TOKEN）が未設定"
     body = {"ref": ref}
@@ -39,6 +44,9 @@ def dispatch(workflow="urahime-auto.yml", ref="main", inputs=None):
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
+        if not URAHIME_ON:
+            print("裏姫デコは止めているので、起動の試験は飛ばします")
+            sys.exit(0)
         if not TOKEN:
             print("鍵（CAST_MYPAGE_TOKEN）が未設定なので、起動の試験は飛ばします")
             sys.exit(0)

@@ -476,7 +476,7 @@ def main():
     for x in fresh:
         x["read"] = read_shift_reply(x.get("raw") or x["body"], now.replace(tzinfo=None), x["shopdir"])
     for x in fresh:
-        x["urahime"] = any(w in x["body"] for w in URAHIME_WORDS) and x["gid"] not in NO_AUTO
+        x["urahime"] = cast_mypage.URAHIME_ON and any(w in x["body"] for w in URAHIME_WORDS) and x["gid"] not in NO_AUTO
         x["yoasobi"] = yoasobi_ok(x["body"]) and x["gid"] not in NO_AUTO
         # 受け付けの質問への答え：店の直前の発言が質問で、相手の発言が「質問返し」でない時だけ（質問返しを答え扱いして受け取りの定型を返してしまった 2026-10-22）
         _q = re.search(r"[？?]\s*$", x["body"]) and len(x["body"]) <= 40

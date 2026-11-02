@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
+import cast_mypage
 import data_box
 import ops_hours
 import secret_box
@@ -47,6 +48,9 @@ def age_hours(iso):
 
 
 def check_mypage():
+    if not cast_mypage.URAHIME_ON:
+        print("裏姫デコ更新: 止めているので見ない")
+        return []
     url = ((secret_box.data("heaven_ids") or {}).get("mypage_status_url") or "").strip()
     if not url:
         print("裏姫デコ更新: 見る場所（鍵つき）が無いので見ない")
