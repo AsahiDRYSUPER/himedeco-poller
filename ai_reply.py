@@ -25,6 +25,8 @@ PUBLIC_RAW = "https://raw.githubusercontent.com/AsahiDRYSUPER/himedeco-poller/da
 
 MODEL = (os.environ.get("AI_MODEL") or "").strip() or "claude-opus-5-5"
 EFFORT = (os.environ.get("AI_EFFORT") or "").strip() or "low"
+# お客さん（夜遊び）への返事は、案内まで考えさせるので1段深く（件数は少ない。2026-11-11）
+CUSTOMER_EFFORT = (os.environ.get("AI_CUSTOMER_EFFORT") or "").strip() or "medium"
 MAX_PER_RUN = int(os.environ.get("AI_MAX_PER_RUN", "12") or 12)
 MAX_REPLY_CHARS = 480           # 姫デコチャット1通は500字まで
 FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-fable-5", "claude-sonnet-5-5")
@@ -148,7 +150,7 @@ def ask(shop_label, shopdir, name, history, latest):
     return _call(system_prompt(), user, CAST_SCHEMA)
 
 
-def _call(system, user, schema):
+def _call(system, user, schema, effort=None):
     """Claude に1回聞いて (dict, 理由) を返す。失敗の理由は文字（鍵は出さない）。"""
     import anthropic
     client = anthropic.Anthropic()
@@ -156,7 +158,7 @@ def _call(system, user, schema):
         model=MODEL,
         max_tokens=16000,
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-        output_config={"effort": EFFORT, "format": {"type": "json_schema", "schema": schema}},
+        output_config={"effort": effort or EFFORT, "format": {"type": "json_schema", "schema": schema}},
         messages=[{"role": "user", "content": user}],
     )
     try:
@@ -205,8 +207,13 @@ def customer_prompt():
     return know + "\n\n" + CUSTOMER_RULES
 
 
-def ask_customer(shop_label, name, history, latest, schedule=""):
-    """夜遊びヘブンのお客さんの発言にどう返すかを Claude に聞く。返す: (dict, 理由)。女の子向けの非公開メモは渡さない。"""
+FIX_NOTE = {"長すぎる": "前の案は長すぎて送れなかった（URLを除いて360字まで）。中身を絞って、250字前後で書き直す（候補・会い方・最後の問いは残す）。",
+            "値引きの言葉": "前の案は送れない言葉（割引・値引・無料・タダ・discount・free）を含んでいた。その言葉を使わずに書き直す（0円は「0円」）。"}
+
+
+def ask_customer(shop_label, name, history, latest, schedule="", roster="", fix=""):
+    """夜遊びヘブンのお客さんの発言にどう返すかを Claude に聞く。返す: (dict, 理由)。女の子向けの非公開メモは渡さない。
+    roster＝夜遊びに載っている女の子と出勤（公開ページ）。fix＝前の案が送れなかった理由（1回だけ直させる）"""
     if not enabled():
         return None, "off"
     if not secret_box.text("yoasobi_knowledge"):
@@ -218,9 +225,11 @@ def ask_customer(shop_label, name, history, latest, schedule=""):
             f"今の日時：{datetime.now(JST).strftime('%Y-%m-%d %H:%M')}\n\n"
             f"直近のやりとり（古い順）：\n{history or '（無し）'}\n\n"
             f"今回返すお客さんの発言：\n{latest}\n\n"
-            + (f"今日のCTI（この店の女の子の出勤と予約の時間。予約の時間は埋まっている）：\n{schedule}\n\n" if schedule else "今日のCTI：（写しが無い。空き・変更は受付へ）\n\n")
+            + (f"YOASOBI HEAVEN の一覧と出勤（公開ページより）：\n{roster}\n\n" if roster else "YOASOBI HEAVEN の一覧と出勤：（読めなかった。女の子の名前・出勤は自分で決めず、[出勤表] を案内する）\n\n")
+            + (f"今日のCTI（この店の女の子の出勤・予約で埋まっている時間・今から入れる時間。名前は日本語）：\n{schedule}\n\n" if schedule else "今日のCTI：（写しが無い。今日の空きは出勤表の時間までしか分からない）\n\n")
+            + (f"【直し】{FIX_NOTE.get(fix, fix)}\n\n" if fix else "")
             + "決まりに沿って JSON で答えてください。")
-    return _call(customer_prompt(), user, CUSTOMER_SCHEMA)
+    return _call(customer_prompt(), user, CUSTOMER_SCHEMA, effort=CUSTOMER_EFFORT)
 
 
 def check_customer(data):
@@ -230,7 +239,7 @@ def check_customer(data):
     reply = (data.get("reply") or "").strip()
     if not reply:
         return False, "返事が空"
-    if len(re.sub(r"https?://\S+", "", reply)) > 300:   # 予約リンク（200字超）は数えない（2026-10-31）
+    if len(re.sub(r"https?://\S+", "", reply)) > 360:   # 予約リンク（200字超）は数えない（2026-10-31）。候補2人＋会い方まで1通に入れるため 300→360（2026-11-11）
         return False, "長すぎる"
     # 値引きの言葉。free 単独は「空いている」の意味で使われるので止めない（2026-10-31）
     if re.search(r"(割引|値引|discount|for free|free of charge|無料|タダ)", reply, re.I):

@@ -27,6 +27,7 @@ import requests
 
 import ai_reply      # お客さんへの返事を Claude で考える（2026-10-23）
 import secret_box    # 鍵つきの定型文（2026-10-25）
+import yoasobi_roster   # 夜遊びに載っている女の子と出勤（公開ページ）・リンクの置き換え（2026-11-11）
 
 from heaven_http import BASE, HeavenClient, load_credentials
 
@@ -69,8 +70,9 @@ def reserve_link(shopdir):
 _AVAIL = {"loaded": False, "data": None}
 
 
-def avail_text(shopdir):
-    """日本の実行機が残したCTIの写し（暗号化）を読み、この店の女の子の出勤と予約の時間を短い文にする。読めなければ空。"""
+def avail_text(shopdir, now=None):
+    """日本の実行機が残したCTIの写し（暗号化）を読み、この店の女の子の出勤と予約の時間を短い文にする。読めなければ空。
+    2026-11-11〜 今から入れる時間（60分以上続けて空いている時間）も計算して添える（AIに空きを計算させない）。"""
     if not _AVAIL["loaded"]:
         _AVAIL["loaded"] = True
         try:
@@ -87,6 +89,12 @@ def avail_text(shopdir):
         return ""
     def hm(m):
         return f"{'翌' if m >= 24 * 60 else ''}{(m // 60) % 24}:{m % 60:02d}"
+    # 今が、写しの日の0時から何分か（深夜は24時を超える）。分からなければ、今から入れる時間は出さない
+    now_min = None
+    m = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", str(d.get("day", "")))
+    if m:
+        nm = int(((now or datetime.now(JST)) - datetime(int(m[1]), int(m[2]), int(m[3]), tzinfo=JST)).total_seconds() // 60)
+        now_min = nm if 0 <= nm < 36 * 60 else None
     lines = []
     for g in d.get("girls", []):
         if g.get("shop") != shopdir:
@@ -99,8 +107,17 @@ def avail_text(shopdir):
         arrive = f"（一番早い到着は {hm(w[0] + ARRIVE_AFTER)}）" if (w and ARRIVE_AFTER is not None) else ""
         work = f"出勤 {hm(w[0])}-{hm(w[1])}{arrive}" if w else "出勤の時間不明"
         busy = "、".join(f"{hm(a)}-{hm(b)}" for a, b in g.get("busy", [])) or "なし"
-        lines.append(f"- {g['name']}：{work}／予約で埋まっている時間 {busy}")
-    return f"（{d.get('day', '')} の写し）\n" + "\n".join(lines) if lines else ""
+        slots = yoasobi_roster.open_slots(w, g.get("busy", []), now_min, ARRIVE_AFTER)
+        free = ""
+        if slots is not None:
+            free = "／今から入れる時間 " + ("、".join(f"{hm(a)}頃〜{hm(b)}（{yoasobi_roster.course_cap(b - a)}）" for a, b in slots)
+                                       or "なし（60分が入る空きが無い）")
+        lines.append(f"- {g['name']}：{work}／予約で埋まっている時間 {busy}{free}")
+    if not lines:
+        return ""
+    head = f"（{d.get('day', '')} の写し" + (f"。今は {hm(now_min)}" if now_min is not None else "") + (
+        "。「今から入れる時間」は移動をみて計算済み" if (now_min is not None and ARRIVE_AFTER is not None) else "") + "）"
+    return head + "\n" + "\n".join(lines)
 
 
 HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じお客さんに送る間隔（分）（2026-10-31 確認）
@@ -140,6 +157,13 @@ def save_state(st):
     st["seen"] = {k: v for k, v in st.get("seen", {}).items() if v >= cut}
     st["at"] = datetime.now(JST).isoformat()
     STATE.write_text(json.dumps(st, ensure_ascii=False, indent=0), encoding="utf-8")
+
+
+def fill_reply(data, shopdir):
+    """AIの文の置き換え記号（[予約リンク] [出勤表] [女の子:番号] [地図:ホテル名]）をURLにする"""
+    if data and data.get("reply"):
+        data["reply"] = yoasobi_roster.fill_links(data["reply"], YO_DIR.get(shopdir, ""), reserve_link(shopdir))
+    return data
 
 
 def tkey(shop, name, at):
@@ -288,8 +312,13 @@ def pressed(how):
     return bool(how) and how not in NOT_PRESSED and not str(how).startswith("押す前")
 
 
+# お客さんがボットのメニューで女の子を選び「問い合わせしたい」を押すと、会話リストでは「自分: I WANT TO INQUIRE」と
+# 店の側に見える（ボットが「店舗スタッフより直接ご連絡します」と返している）。ここから先は店が返す番なので未返信に数える（2026-11-11）
+INQUIRY_MARKS = ("I WANT TO INQUIRE", "問合せしたい", "問い合わせしたい", "立即咨询", "立即諮詢", "문의하고")
+
+
 def parse_row(t, now):
-    """会話リストの1行 → {name, preview, at(datetime), mine(店が最後か)}"""
+    """会話リストの1行 → {name, preview, at(datetime), mine(店が最後か), inquiry(ボットの問い合わせで止まっているか)}"""
     m = re.search(r"(\d{2})/(\d{2}) (\d{2}):(\d{2})\s*\d*$", t)
     if not m:
         return None
@@ -299,8 +328,9 @@ def parse_row(t, now):
     head = t[: m.start()].strip()
     name = head.split(" ")[0]
     preview = head[len(name):].strip()
-    return {"name": name, "preview": preview, "at": at, "mine": preview.startswith("自分:"), "gone": "退会" in preview,
-            "row": t}
+    mine = preview.startswith("自分:")
+    return {"name": name, "preview": preview, "at": at, "mine": mine, "gone": "退会" in preview,
+            "inquiry": mine and any(k in preview for k in INQUIRY_MARKS), "row": t}
 
 
 def read_thread(chat, row_text):
@@ -434,7 +464,7 @@ def watch_shop(shopdir, st, now):
         rows = [parse_row(t, now) for t in chat.evaluate(ROWS_JS)]
         rows = [r for r in rows if r]
         cut = now - timedelta(days=LOOKBACK_DAYS)
-        pending = [r for r in rows if not r["mine"] and not r["gone"] and r["at"] >= cut]
+        pending = [r for r in rows if (not r["mine"] or r["inquiry"]) and not r["gone"] and r["at"] >= cut]
         n_notified = {"A": 0, "B": 0, "C": 0}
         for r in pending:
             k = tkey(shopdir, r["name"], r["at"].isoformat())
@@ -449,14 +479,28 @@ def watch_shop(shopdir, st, now):
             except Exception as e:
                 log(f"{label}: スレッドを読めませんでした {type(e).__name__}")
             latest = text or r["preview"]
+            if r["inquiry"]:
+                latest = ("（お客さんがボットのメニューで女の子を選び「問い合わせしたい」を押した。画面では店の側に見えるが、押したのはお客さん。"
+                          "ボットは「店舗スタッフより直接ご連絡します」と返している。ここから店が最初の連絡をする。"
+                          "選んだ女の子は直近のやりとりから読み取る）")
             age = int((now - r["at"]).total_seconds() // 60)
             fresh = age <= SEND_MAX_MIN           # 古いメッセージにはお客さんへ何も送らない（2026-10-30 18時間前の会話に受け取りの定型が出た）
-            body = f"{r['name']}（{age}分前）\n{latest[:400]}"
+            body = f"{r['name']}（{age}分前）\n" + ("（ボットの「問い合わせしたい」のあと、店からの連絡待ち）" if r["inquiry"] else latest[:400])
             # まず Claude に聞く（決まり＝鍵つきの指示書）。A で決まりの中なら、AUTO_YOASOBI=on の時だけそのまま送る。
             # それ以外は下書きを付けて知らせる。Claude が使えない時は今まで通りの仕分けだけ（2026-10-23）
-            data, why = (ai_reply.ask_customer(label, r["name"], hist, latest, avail_text(shopdir)) if ai_reply.enabled() else (None, "off"))
-            if data and data.get("reply"):
-                data["reply"] = data["reply"].replace("[予約リンク]", reserve_link(shopdir))
+            roster = yoasobi_roster.roster_text(YO_DIR.get(shopdir, "")) if ai_reply.enabled() else ""
+            sched = avail_text(shopdir) if ai_reply.enabled() else ""
+            if ai_reply.enabled():
+                log(f"{label}: 夜遊びの一覧 {'あり' if roster else 'なし'}・CTIの写し {'あり' if sched else 'なし'}")   # 中身は出さない
+            data, why = (ai_reply.ask_customer(label, r["name"], hist, latest, sched, roster) if ai_reply.enabled() else (None, "off"))
+            data = fill_reply(data, shopdir)
+            if data:
+                can0, w0 = ai_reply.check_customer(data)
+                # 長すぎた・言ってはいけない言葉が混じった時は、受け取りの定型に逃げる前に1回だけ直させる（2026-11-11）
+                if not can0 and w0 in ("長すぎる", "値引きの言葉"):
+                    d2, why2 = ai_reply.ask_customer(label, r["name"], hist, latest, sched, roster, fix=w0)
+                    if d2:
+                        data, why = fill_reply(d2, shopdir), why2
             sent, title, tried, no_reply = False, "", False, False
             if data:
                 cat = data.get("category") or "C"
