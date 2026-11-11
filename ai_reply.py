@@ -207,7 +207,7 @@ def customer_prompt():
     return know + "\n\n" + CUSTOMER_RULES
 
 
-FIX_NOTE = {"長すぎる": "前の案は長すぎて送れなかった（URLを除いて360字まで）。中身を絞って、250字前後で書き直す（候補・会い方・最後の問いは残す）。",
+FIX_NOTE = {"長すぎる": "前の案は長すぎて送れなかった（URLを除いて400字まで）。中身を絞って、250字前後で書き直す（候補・会い方・最後の問いは残す）。",
             "値引きの言葉": "前の案は送れない言葉（割引・値引・無料・タダ・discount・free）を含んでいた。その言葉を使わずに書き直す（0円は「0円」）。"}
 
 
@@ -239,7 +239,7 @@ def check_customer(data):
     reply = (data.get("reply") or "").strip()
     if not reply:
         return False, "返事が空"
-    if len(re.sub(r"https?://\S+", "", reply)) > 360:   # 予約リンク（200字超）は数えない（2026-10-31）。候補2人＋会い方まで1通に入れるため 300→360（2026-11-11）
+    if len(re.sub(r"https?://\S+", "", reply)) > 400:   # 予約リンク（200字超）は数えない（2026-10-31）。候補2人＋場所の案まで1通に入れるため 300→400（2026-11-11）
         return False, "長すぎる"
     # 値引きの言葉。free 単独は「空いている」の意味で使われるので止めない（2026-10-31）
     if re.search(r"(割引|値引|discount|for free|free of charge|無料|タダ)", reply, re.I):
