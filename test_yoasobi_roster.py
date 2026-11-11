@@ -83,6 +83,27 @@ ok &= r1["mine"] and r1["inquiry"]
 ok &= r2["mine"] and not r2["inquiry"]
 ok &= (not r3["mine"]) and not r3["inquiry"]
 ok &= r4["mine"] and not r4["inquiry"]
+# ボットの「今すぐ遊べる女の子」も店が返す番（2026-11-12）。ほかのメニュー・店の文は数えない
+r5 = W.parse_row("SampleGuest 自分: GIRLS AVAILABLE NOW 01/05 11:50", nw)
+r6 = W.parse_row("SampleGuest 自分: GIRLS WORKING TOMORROW 01/05 11:50", nw)
+ok &= r5["mine"] and r5["avail"] and not r5["inquiry"]
+ok &= r6["mine"] and not r6["avail"]
+ok &= not r1["avail"] and not r2["avail"] and not r3["avail"] and not r4["avail"]
+
+# 受け取りの定型は同じお客さんに1回だけ（2026-11-12）。送る所は作り物に替える
+_sent = []
+W.send_in_thread = lambda chat, text: (_sent.append(text) or True, "icon@1")
+W.HOLD_TEXT, W.HOLD_ONCE, W.HOLD_MIN = "テストの定型", True, 30
+_st = {"seen": {}}
+_t0 = datetime(2099, 1, 1, 21, 0, tzinfo=W.JST)
+ok &= W.send_hold(None, _st, "testshop", "SampleGuest", _t0, "テスト") is True
+ok &= W.send_hold(None, _st, "testshop", "SampleGuest", _t0 + timedelta(hours=5), "テスト") is False   # 5時間後も送らない
+ok &= W.send_hold(None, _st, "testshop", "OtherGuest", _t0, "テスト") is True                          # 別のお客さんには1回
+ok &= len(_sent) == 2
+W.HOLD_ONCE = False                                                                                      # off なら HOLD_MIN 分おきに戻る
+ok &= W.send_hold(None, _st, "testshop", "SampleGuest", _t0 + timedelta(minutes=31), "テスト") is True
+W.HOLD_TEXT = ""
+ok &= W.send_hold(None, {"seen": {}}, "testshop", "NewGuest", _t0, "テスト") is False                   # 定型が空なら送らない
 
 # 今から入れる時間（作り物の数字。移動の分は本物と違う値で試す）
 OS = R.open_slots

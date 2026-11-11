@@ -120,7 +120,10 @@ def avail_text(shopdir, now=None):
     return head + "\n" + "\n".join(lines)
 
 
-HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じお客さんに送る間隔（分）（2026-10-31 確認）
+HOLD_MIN = int(os.environ.get("YOASOBI_HOLD_MIN", "30"))       # 「確認してご連絡します」を同じお客さんに送る間隔（分）（2026-10-31 確認）。HOLD_ONCE が on の時は使わない
+# 「確認してご連絡します」は同じお客さんに1回だけ（2026-11-12 決定。同じ定型が何度も届くと「返事をする気が無い」と読まれる）。
+# 印は yoasobi_state.json に14日残るので、14日たつとまた1回送れる。off にすると HOLD_MIN 分おきに戻る
+HOLD_ONCE = os.environ.get("YOASOBI_HOLD_ONCE", "on").strip().lower() not in ("off", "0", "false", "no")
 _TX = secret_box.data("yoasobi_templates") or {}   # 定型文と分け方の言葉は鍵つき（sealed/yoasobi_templates.enc）。鍵が無ければ定型は使わず、AIか受付へ（2026-10-25）
 HOLD_TEXT = os.environ.get("YOASOBI_HOLD_TEXT", "").strip() or _TX.get("hold_text") or ""   # 空なら送らない
 SEND_MAX_MIN = int(os.environ.get("YOASOBI_SEND_MAX_MIN", "60"))   # お客さんに自動で送るのは、届いてから何分以内のメッセージか（古いものは知らせるだけ。2026-10-30）
@@ -171,11 +174,11 @@ def tkey(shop, name, at):
 
 
 def send_hold(chat, st, shopdir, name, now, label):
-    """受け取りの定型を送る。同じお客さんには HOLD_MIN 分に1回まで。画面で確かめられたら True。
+    """受け取りの定型を送る。同じお客さんには1回だけ（HOLD_ONCE が off なら HOLD_MIN 分に1回まで）。画面で確かめられたら True。
     押したら印を付ける（確かめが外れても、同じ定型を重ねない）"""
     hk = "hold:" + tkey(shopdir, name, "")
     last_hold = st["seen"].get(hk)
-    if not HOLD_TEXT or (last_hold and datetime.fromisoformat(last_hold) >= now - timedelta(minutes=HOLD_MIN)):
+    if not HOLD_TEXT or (last_hold and (HOLD_ONCE or datetime.fromisoformat(last_hold) >= now - timedelta(minutes=HOLD_MIN))):
         return False
     try:
         held, how = send_in_thread(chat, HOLD_TEXT)
@@ -315,10 +318,14 @@ def pressed(how):
 # お客さんがボットのメニューで女の子を選び「問い合わせしたい」を押すと、会話リストでは「自分: I WANT TO INQUIRE」と
 # 店の側に見える（ボットが「店舗スタッフより直接ご連絡します」と返している）。ここから先は店が返す番なので未返信に数える（2026-11-11）
 INQUIRY_MARKS = ("I WANT TO INQUIRE", "問合せしたい", "問い合わせしたい", "立即咨询", "立即諮詢", "문의하고")
+# お客さんがボットのメニューで「今すぐ遊べる女の子」を押した時も、会話リストでは「自分: GIRLS AVAILABLE NOW」と店の側に見える。
+# ボットは今日の出勤の子を並べるだけで、誰も続けないと止まる（10/30 の例）。ここも店が返す番に数え、AIが今から入れる子を2人返す（2026-11-12）
+AVAIL_MARKS = ("GIRLS AVAILABLE NOW", "今すぐ遊べる女の子")
 
 
 def parse_row(t, now):
-    """会話リストの1行 → {name, preview, at(datetime), mine(店が最後か), inquiry(ボットの問い合わせで止まっているか)}"""
+    """会話リストの1行 → {name, preview, at(datetime), mine(店が最後か), inquiry(ボットの問い合わせで止まっているか),
+    avail(ボットの「今すぐ遊べる女の子」で止まっているか)}"""
     m = re.search(r"(\d{2})/(\d{2}) (\d{2}):(\d{2})\s*\d*$", t)
     if not m:
         return None
@@ -330,7 +337,8 @@ def parse_row(t, now):
     preview = head[len(name):].strip()
     mine = preview.startswith("自分:")
     return {"name": name, "preview": preview, "at": at, "mine": mine, "gone": "退会" in preview,
-            "inquiry": mine and any(k in preview for k in INQUIRY_MARKS), "row": t}
+            "inquiry": mine and any(k in preview for k in INQUIRY_MARKS),
+            "avail": mine and any(k in preview for k in AVAIL_MARKS), "row": t}
 
 
 def read_thread(chat, row_text):
@@ -464,7 +472,7 @@ def watch_shop(shopdir, st, now):
         rows = [parse_row(t, now) for t in chat.evaluate(ROWS_JS)]
         rows = [r for r in rows if r]
         cut = now - timedelta(days=LOOKBACK_DAYS)
-        pending = [r for r in rows if (not r["mine"] or r["inquiry"]) and not r["gone"] and r["at"] >= cut]
+        pending = [r for r in rows if (not r["mine"] or r["inquiry"] or r["avail"]) and not r["gone"] and r["at"] >= cut]
         n_notified = {"A": 0, "B": 0, "C": 0}
         for r in pending:
             k = tkey(shopdir, r["name"], r["at"].isoformat())
@@ -483,9 +491,13 @@ def watch_shop(shopdir, st, now):
                 latest = ("（お客さんがボットのメニューで女の子を選び「問い合わせしたい」を押した。画面では店の側に見えるが、押したのはお客さん。"
                           "ボットは「店舗スタッフより直接ご連絡します」と返している。ここから店が最初の連絡をする。"
                           "選んだ女の子は直近のやりとりから読み取る）")
+            elif r["avail"]:
+                latest = ("（お客さんがボットのメニューで「今すぐ遊べる女の子（GIRLS AVAILABLE NOW）」を押した。画面では店の側に見えるが、押したのはお客さん。"
+                          "ボットは今日の出勤の子の写真を並べただけ。ここから店が、今から入れる子を2人出して予約へ進める）")
             age = int((now - r["at"]).total_seconds() // 60)
             fresh = age <= SEND_MAX_MIN           # 古いメッセージにはお客さんへ何も送らない（2026-10-30 18時間前の会話に受け取りの定型が出た）
-            body = f"{r['name']}（{age}分前）\n" + ("（ボットの「問い合わせしたい」のあと、店からの連絡待ち）" if r["inquiry"] else latest[:400])
+            body = f"{r['name']}（{age}分前）\n" + ("（ボットの「問い合わせしたい」のあと、店からの連絡待ち）" if r["inquiry"]
+                                                   else "（ボットの「今すぐ遊べる女の子」を押した）" if r["avail"] else latest[:400])
             # まず Claude に聞く（決まり＝鍵つきの指示書）。A で決まりの中なら、AUTO_YOASOBI=on の時だけそのまま送る。
             # それ以外は下書きを付けて知らせる。Claude が使えない時は今まで通りの仕分けだけ（2026-10-23）
             roster = yoasobi_roster.roster_text(YO_DIR.get(shopdir, "")) if ai_reply.enabled() else ""
