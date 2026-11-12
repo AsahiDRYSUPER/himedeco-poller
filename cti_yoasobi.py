@@ -2,6 +2,7 @@
 
 1. 空き状況の写し：対象の店の女の子の出勤と予約の時間を、暗号化して out/cti_avail.enc.json に残す
    （公開の dataブランチに出るが、鍵 TODO_KEY が無いと読めない）。お客さんのチャットの見張りが使う。
+   2026-11-12〜 明日・あさっての分（"ahead"）も写す。見張りが夜遊びの予約を入れる前に、CTIの予約と重ならないかを見るため。
 2. 配車の連絡：対象の予約を見分けて、決まりに合ったら非公開側（cast-mypage）の仕組みを起動する。
    見分けの言葉は鍵つき（yoasobi_templates の "dispatch_match"）。開けない時は配車の連絡をしない。
    読んだ中身は公開のログに出さない。送った印は実行機（Mac）の中のファイルにだけ残す。
@@ -18,6 +19,7 @@ JST = timezone(timedelta(hours=9))
 YO_SHOPS = ("cg_kirakira", "s_matikado", "mrs_orange", "potya_reen")
 OUT_DIR = Path(os.environ.get("OUT_DIR", "out"))
 AVAIL_NAME = "cti_avail"   # 空き状況の写し（鍵つき out/cti_avail.enc.json。data_box で書く）
+AHEAD_DAYS = int(os.environ.get("CTI_YOASOBI_AHEAD_DAYS", "2"))   # 明日から何日先まで写すか（0 で今日だけ）
 STATE = Path(os.environ.get("CTI_YOASOBI_STATE", str(Path.home() / "jp-state" / "cti_yoasobi.json")))
 MAX_OPEN = int(os.environ.get("CTI_YOASOBI_MAX_OPEN", "12"))       # 1回で開く予約の窓の数の上限（即ヒメ直しを遅らせない）
 LOOK_AHEAD = int(os.environ.get("CTI_YOASOBI_AHEAD_MIN", "180"))   # 何分先までの予約を見るか
@@ -54,10 +56,7 @@ def _hhmm(m):
 
 
 # ---------- 1. 空き状況の写し（暗号化） ----------
-def save_avail(people, now, head):
-    import data_box   # 鍵かけは dataブランチの他の記録と同じ部品で（2026-10-25）
-    if not data_box.ready():
-        return 0
+def _girls(people):
     girls = []
     for p in people:
         if p.get("shop") not in YO_SHOPS or not p.get("name"):
@@ -65,7 +64,29 @@ def save_avail(people, now, head):
         girls.append({"shop": p["shop"], "name": p["name"], "work": list(p["work"]) if p.get("work") else None,
                       "up": bool(p.get("up")), "absent": bool(p.get("absent")),
                       "busy": [[b["s"], b["e"]] for b in p.get("bookings", []) if b.get("s") is not None]})
+    return girls
+
+
+def read_ahead(cti, now):
+    """明日から AHEAD_DAYS 日先までの本日スケジュールを読む。返す: [{"day": 見出し, "girls": […]}, …]（読めた日だけ）"""
+    out = []
+    for k in range(1, AHEAD_DAYS + 1):
+        try:
+            people, head = cti.read(now + timedelta(days=k))
+        except Exception:
+            break
+        out.append({"day": head, "girls": _girls(people)})
+    return out
+
+
+def save_avail(people, now, head, ahead=None):
+    import data_box   # 鍵かけは dataブランチの他の記録と同じ部品で（2026-10-25）
+    if not data_box.ready():
+        return 0
+    girls = _girls(people)
     payload = {"generated_at": now.isoformat(), "day": head, "girls": girls}
+    if ahead:
+        payload["ahead"] = ahead
     if not data_box.write(AVAIL_NAME, payload, OUT_DIR, generated_at=now.isoformat()):
         return 0
     return len(girls)
@@ -163,6 +184,7 @@ def handle(cti, now, dry=False):
     mt = dispatch_match()
     if mt is None:
         print(f"夜遊び：空き状況の写し {n_avail}人／配車の見分けの言葉（鍵つき）が開けないので、配車の連絡はしない")
+        _save_with_ahead(cti, people, now, head)
         return
     st = load_state()
     nm = _now_min(now)
@@ -207,3 +229,14 @@ def handle(cti, now, dry=False):
     save_state(st, now)
     print(f"夜遊び：空き状況の写し {n_avail}人／対象の予約 {found}件（開いた窓 {opened}）→ 配車の連絡を起動 {sent}件・待ち {waiting}件"
           + ("（送信はOFF。文を作るだけ）" if not send else ""))
+    _save_with_ahead(cti, people, now, head)
+
+
+def _save_with_ahead(cti, people, now, head):
+    """配車の連絡（今日の画面を使う）のあとで、明日から先の日を読み、今日の分と合わせて写しを書き直す"""
+    if AHEAD_DAYS <= 0:
+        return
+    ahead = read_ahead(cti, now)
+    if ahead:
+        save_avail(people, now, head, ahead)
+    print(f"夜遊び：先の日の写し {len(ahead)}日分")

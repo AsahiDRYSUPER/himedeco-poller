@@ -44,7 +44,13 @@ ok &= "https://www.google.com/maps/search/?api=1&query=" in r and "%E5%B2%A1%E5%
 ok &= "https://yoasobi-heaven.com/en/okayama/YA3301/testshop/girlid-11111111/" in r
 ok &= "https://yoasobi-heaven.com/en/okayama/YA3301/testshop/attend/" in r
 ok &= R.fill_links("そのまま", "testshop", "RSV") == "そのまま"
-ok &= R.fill_links("全角［女の子:11111111］と［地図：サンプル］と［地図］", "testshop", "RSV") == "全角https://yoasobi-heaven.com/en/okayama/YA3301/testshop/girlid-11111111/と" + R.map_url("サンプル") + "と"
+ok &= R.fill_links("全角［女の子:11111111］と［地図：サンプル］と［地図］", "testshop", "RSV") == "全角https://yoasobi-heaven.com/en/okayama/YA3301/testshop/girlid-11111111/ と" + R.map_url("サンプル") + " と"   # URLのすぐ後ろに文字が続く時は間をあける（2026-11-12）
+ok &= R.fill_links("[予約リンク]。\n[出勤表] から", "testshop", "RSV") == "RSV 。\nhttps://yoasobi-heaven.com/en/okayama/YA3301/testshop/attend/ から"
+# ネット予約の無い店：[予約リンク] を含む文をまるごと外す（2026-11-12）
+ok &= R.drop_reserve("A 子の案です。[予約リンク] から空きを見てご予約できます（会員登録が必要です）。このチャットでも受けます。") == "A 子の案です。このチャットでも受けます。"
+ok &= R.drop_reserve("案です。\n予約：［予約リンク］\nホテルは？") == "案です。\nホテルは？"
+ok &= R.drop_reserve("リンクなし。そのまま") == "リンクなし。そのまま"
+ok &= R.drop_reserve("[予約リンク]") == ""
 
 # 読めない時（確認画面・つながらない）は空。出勤ゼロと取り違えない
 R._CACHE.clear()

@@ -211,7 +211,7 @@ FIX_NOTE = {"長すぎる": "前の案は長すぎて送れなかった（URLを
             "値引きの言葉": "前の案は送れない言葉（割引・値引・無料・タダ・discount・free）を含んでいた。その言葉を使わずに書き直す（0円は「0円」）。"}
 
 
-def ask_customer(shop_label, name, history, latest, schedule="", roster="", fix=""):
+def ask_customer(shop_label, name, history, latest, schedule="", roster="", fix="", ahead=""):
     """夜遊びヘブンのお客さんの発言にどう返すかを Claude に聞く。返す: (dict, 理由)。女の子向けの非公開メモは渡さない。
     roster＝夜遊びに載っている女の子と出勤（公開ページ）。fix＝前の案が送れなかった理由（1回だけ直させる）"""
     if not enabled():
@@ -227,6 +227,7 @@ def ask_customer(shop_label, name, history, latest, schedule="", roster="", fix=
             f"今回返すお客さんの発言：\n{latest}\n\n"
             + (f"YOASOBI HEAVEN の一覧と出勤（公開ページより）：\n{roster}\n\n" if roster else "YOASOBI HEAVEN の一覧と出勤：（読めなかった。女の子の名前・出勤は自分で決めず、[出勤表] を案内する）\n\n")
             + (f"今日のCTI（この店の女の子の出勤・予約で埋まっている時間・今から入れる時間。名前は日本語）：\n{schedule}\n\n" if schedule else "今日のCTI：（写しが無い。今日の空きは出勤表の時間までしか分からない）\n\n")
+            + (f"明日・あさってのCTI（この店の女の子の出勤・予約で埋まっている時間。名前は日本語）：\n{ahead}\n\n" if ahead else "")
             + (f"【直し】{FIX_NOTE.get(fix, fix)}\n\n" if fix else "")
             + "決まりに沿って JSON で答えてください。")
     return _call(customer_prompt(), user, CUSTOMER_SCHEMA, effort=CUSTOMER_EFFORT)

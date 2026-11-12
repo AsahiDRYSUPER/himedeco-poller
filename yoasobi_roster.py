@@ -137,7 +137,9 @@ LINK = re.compile(r"[\[［](予約リンク|出勤表|女の子[:：]\s*(\d+)|�
 
 def fill_links(reply, d, reserve):
     """AIの文の置き換え記号をURLにする。[予約リンク] [出勤表] [女の子:番号] [地図:ホテル名]。分からない記号は消す"""
-    def rep(m):
+    src = reply or ""
+
+    def url_of(m):
         whole, gid, place = m.group(1), m.group(2), m.group(3)
         if whole == "予約リンク":
             return reserve
@@ -148,6 +150,20 @@ def fill_links(reply, d, reserve):
         if place:
             return map_url(place.strip())
         return ""
-    out = LINK.sub(rep, reply or "")
+
+    def rep(m):
+        u = url_of(m)
+        # URLのすぐ後ろに文字が続くと、リンクがその文字まで伸びる（2026-11-12）→ 間をあける
+        if u and m.end() < len(src) and not src[m.end()].isspace():
+            u += " "
+        return u
+    out = LINK.sub(rep, src)
     out = re.sub(r"[\[［](予約リンク|出勤表|女の子|地図)[^\]］]*[\]］]", "", out)
     return re.sub(r"[ \t]+\n", "\n", out).strip()
+
+
+def drop_reserve(reply):
+    """ネット予約の無い店の文から、[予約リンク] を含む文をまるごと外す（2026-11-12 開いても予約できない店がある）"""
+    parts = re.split(r"(?<=[。！？!?\n])", reply or "")
+    keep = [p for p in parts if not re.search(r"[\[［]予約リンク[\]］]", p)]
+    return re.sub(r"\n{3,}", "\n\n", "".join(keep)).strip()

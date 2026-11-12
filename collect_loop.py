@@ -87,15 +87,30 @@ def yoasobi_watch(reason, shop_id=""):
         if sd:
             env["YOASOBI_SHOPS"] = sd         # メールで分かった店だけを見に行く（速く返すため）
         print("夜遊びの見張り:", reason, f"（店 {sd}）" if sd else "")
-        return subprocess.run([sys.executable, "yoasobi_watch.py"], timeout=600, env=env).returncode == 0
+        try:
+            return subprocess.run([sys.executable, "yoasobi_watch.py"], timeout=600, env=env).returncode == 0
+        finally:
+            # 印を書いた回は、すぐ公開する（次の実行が古い記録を読まないように。2026-11-12）。
+            # 印のファイルは公開できた時に消す（できなかった時は残り、次の公開でもう一度）
+            if os.path.exists(PUBLISH_NOW):
+                publish()
     except Exception as _e:
         print("夜遊びの見張りで失敗:", type(_e).__name__)
         return False
 
 
+PUBLISH_NOW = "out/yoasobi_publish_now"
+
+
 def publish():
     r = subprocess.run(["bash", "publish_data.sh"])
     print("公開:", "OK" if r.returncode == 0 else f"失敗({r.returncode})")
+    if r.returncode == 0:
+        try:
+            os.remove(PUBLISH_NOW)      # 夜遊びの記録も一緒に出た
+        except FileNotFoundError:
+            pass
+    return r.returncode == 0
 
 
 end = time.time() + LOOP_MIN * 60
@@ -152,3 +167,6 @@ while True:
         got = wait_mail(remain)
         if got and os.environ.get("YOASOBI_IN_LOOP", "on").lower() not in ("off", "0", "false"):
             yoasobi_watch("メールの合図", (got or {}).get("shop_id", "") if isinstance(got, dict) else "")
+# 終わる前に、まだ公開できていない夜遊びの印があればもう一度出す（次の実行は dataブランチから読むため。2026-11-12）
+if os.path.exists(PUBLISH_NOW):
+    publish()

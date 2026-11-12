@@ -56,6 +56,9 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           YOASOBI_SHOPS: ${{ inputs.shops || 'cg_kirakira' }}
           AUTO_YOASOBI: ${{ vars.AUTO_YOASOBI || 'off' }}
+          YOASOBI_BOOK: "off"
+          YOASOBI_MANUAL: "1"
+          GH_TOKEN: ${{ github.token }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AI_REPLY: ${{ vars.AI_REPLY }}
           AI_MODEL: ${{ vars.AI_MODEL }}
@@ -64,9 +67,4 @@ jobs:
         run: |
           mkdir -p out
           bash quiet.sh yoasobi python3 yoasobi_watch.py || true
-      - name: 記録を公開（data ブランチの yoasobi_state.json。main にはコミットしない。2026-10-26）
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TODO_KEY: ${{ secrets.TODO_KEY }}
-        run: bash publish_data.sh || true
+      # 手で動かす回の記録は公開しない（2026-11-12〜）。見張りの本体は collect.yml で、その実行は自分の手元の記録を持ち回って公開する。
