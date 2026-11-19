@@ -47,6 +47,21 @@ def badge_shop(badges):
     return None
 
 
+def badge_shops(badges):
+    """行の店の印をすべて（同時在籍の子は「OR」「UC」のように2つ以上ある）。並びは画面の順"""
+    out = []
+    for b in badges:
+        sd = SHOP_BADGE.get(b)
+        if sd and sd not in out:
+            out.append(sd)
+    return out
+
+
+def is_multi(person):
+    """同時在籍の子か（店の印が2つ以上、または名前が「◯◯（よみ）,△△」のように店ごとの名前のカンマつなぎ）。2026-11-19"""
+    return len(person.get("shops") or []) > 1 or bool(re.search(r"[,、，]", person.get("name") or ""))
+
+
 READ_JS = r"""() => {
   const rows = Array.from(document.querySelectorAll('.schedule-row')).map(rw => {
     const r = rw.getBoundingClientRect();
@@ -119,7 +134,8 @@ def parse(raw):
         shop = badge_shop(r["badges"])
         ROW_BADGES.append((shop, tuple(b for b in r["badges"] if not b.startswith("報酬"))))
         # 出勤時間の末尾の「Up」の有無（意味は鍵つきの時間帯の決まりの説明）
-        out.append({"shop": shop, "name": r["name"], "work": span(r["work"]), "up": bool(re.search(r"up\s*$", r["work"] or "", re.I)),
+        # shop は最初の店の印（今までどおり）。shops は全部（同時在籍の子は両方の店で直すため。2026-11-19）
+        out.append({"shop": shop, "shops": badge_shops(r["badges"]), "name": r["name"], "work": span(r["work"]), "up": bool(re.search(r"up\s*$", r["work"] or "", re.I)),
                     "absent": "当欠" in r["badges"],          # 当日欠勤（新着んの並び替えで使う）
                     "top": r["top"], "bottom": r["bottom"], "bookings": []})
     for it in raw["items"]:
@@ -478,7 +494,8 @@ def summary(people):
         by.setdefault(k, [0, 0])
         by[k][0] += 1
         by[k][1] += len(p["bookings"])
-    return "、".join(f"{k} {v[0]}人/{v[1]}件" for k, v in sorted(by.items()))
+    multi = sum(1 for p in people if is_multi(p))
+    return "、".join(f"{k} {v[0]}人/{v[1]}件" for k, v in sorted(by.items())) + f"（うち同時在籍 {multi}人）"
 
 
 if __name__ == "__main__":

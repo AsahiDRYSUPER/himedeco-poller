@@ -482,13 +482,15 @@ def read_absent(shopdir, now):
             return [], "CTIの鍵なし（当欠は見ない）"
         import cti_schedule
         rows, _ = cti_schedule.read_today(now)
-        people = [{"shop": p["shop"], "name": p["name"], "absent": bool(p.get("absent"))} for p in rows]
+        people = [{"shop": p["shop"], "shops": p.get("shops") or [], "name": p["name"], "absent": bool(p.get("absent"))} for p in rows]
         try:
             CTI_CACHE.write_text(json.dumps({"at": now.isoformat(), "people": people}, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
         src = "CTIを読んだ"
-    return [(p["name"], p.get("shop")) for p in people if p.get("absent") and p.get("shop") in (shopdir, None)], src
+    # 同時在籍の子（店の印が2つ）は、どちらの店でも当欠（2026-11-19）
+    return [(p["name"], p.get("shop")) for p in people
+            if p.get("absent") and (p.get("shop") in (shopdir, None) or shopdir in (p.get("shops") or []))], src
 
 
 def si9_login(page, shop_name):
@@ -914,7 +916,7 @@ def prefetch_cti(now):
         return "CTIの鍵なし"
     import cti_schedule
     rows, _ = cti_schedule.read_today(now)
-    CTI_CACHE.write_text(json.dumps({"at": now.isoformat(), "people": [{"shop": p["shop"], "name": p["name"], "absent": bool(p.get("absent"))} for p in rows]},
+    CTI_CACHE.write_text(json.dumps({"at": now.isoformat(), "people": [{"shop": p["shop"], "shops": p.get("shops") or [], "name": p["name"], "absent": bool(p.get("absent"))} for p in rows]},
                                     ensure_ascii=False), encoding="utf-8")
     return "CTIを読んだ"
 

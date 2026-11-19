@@ -248,19 +248,31 @@ def aliases(name):
     return out or [norm(name)]
 
 
-def match(boxes, people):
-    """ヘブンの箱 → CTIの人。名前を正規化して突き合わせる（カンマ区切りの別名も・前方一致も許す）。"""
-    by = {}
-    for p in people:
-        for a in aliases(p["name"]):
-            by.setdefault(a, p)
+def match(boxes, people, extra=()):
+    """ヘブンの箱 → CTIの人。名前を正規化して突き合わせる（カンマ区切りの別名も・前方一致も許す）。
+    extra は、ほかの店の印の同時在籍の子（2026-11-19）。その店の子で合わなかった箱だけ、extra と突き合わせる
+    （その店の子の突き合わせを、ほかの店の子の名前で崩さないため）。"""
+    def index(ps):
+        by = {}
+        for p in ps:
+            for a in aliases(p["name"]):
+                by.setdefault(a, p)
+        return by
+
+    def find(by, n):
+        p = by.get(n)
+        if p is None and n:
+            cands = {id(v): v for k, v in by.items() if k.startswith(n) or n.startswith(k)}
+            p = next(iter(cands.values())) if len(cands) == 1 else None
+        return p
+
+    own, other = index(people), index(extra)
     out = {}
     for b in boxes:
         n = norm(b["name"])
-        p = by.get(n)
-        if p is None and n:
-            cands = [v for k, v in by.items() if k.startswith(n) or n.startswith(k)]
-            p = cands[0] if len(cands) == 1 else None
+        p = find(own, n)
+        if p is None and other:
+            p = find(other, n)
         out[b["id"]] = p
     return out
 
@@ -451,7 +463,7 @@ def _run(cti, now, nm, dry, only, t0=None):
     try:
         # 新着んの並び替え（si9_sort.py）がCTIの当欠を使う。名前を含むので公開の out/ には置かない（この実行の中だけ）
         cache = Path(os.environ.get("RUNNER_TEMP") or "/tmp") / "cti_people.json"
-        cache.write_text(json.dumps({"at": now.isoformat(), "people": [{"shop": p["shop"], "name": p["name"], "absent": bool(p.get("absent"))} for p in people]},
+        cache.write_text(json.dumps({"at": now.isoformat(), "people": [{"shop": p["shop"], "shops": p.get("shops") or [], "name": p["name"], "absent": bool(p.get("absent"))} for p in people]},
                                     ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         print("  CTIの控えを残せない:", type(e).__name__)
@@ -474,9 +486,14 @@ def _run(cti, now, nm, dry, only, t0=None):
     for shopdir, label in SHOPS.items():
         if only and shopdir not in only:
             continue
-        # 店の印が無い子（複数の店に出ている子。印が「4」「1」など）は、どの店でも名前で突き合わせる
-        mine = [p for p in people if p["shop"] == shopdir] + [p for p in people if p["shop"] is None]
-        if not [p for p in mine if p["shop"] == shopdir]:
+        # この店の印がある子（同時在籍で2つ目の印がこの店の子も。2026-11-19）と、店の印が無い子（印が「4」「1」など）。
+        # 店の印が1つ目しか取れなかった頃は、同時在籍の子は1つ目の店でしか直らず、もう1つの店は待機中のままだった（11/19 UNDERCOVER で発生）
+        def in_shop(p):
+            return shopdir in (p.get("shops") or ([p["shop"]] if p["shop"] else []))
+        mine = [p for p in people if in_shop(p)] + [p for p in people if p["shop"] is None]
+        # ほかの店の印の同時在籍の子も、この店の箱と名前が合えば直す（印が片方の店しか出ていない時の受け皿）
+        extra = [p for p in people if p["shop"] is not None and not in_shop(p) and cti_schedule.is_multi(p)]
+        if not [p for p in people if in_shop(p)] and not extra:
             print(f"  {label}: CTIに今日の子がいない")
             continue
         try:
@@ -490,7 +507,7 @@ def _run(cti, now, nm, dry, only, t0=None):
         if dry:
             from collections import Counter
             print(f"  {label}: 表の種類 {dict(Counter(b['table'] for b in boxes))}、接客中 {sum(1 for b in boxes if b['serving'])}人")
-        pm = match(boxes, mine)
+        pm = match(boxes, mine, extra)
         lead = LEAD_MIN.get(shopdir, LEAD_DEFAULT)
         n_set = n_skip = n_nomatch = 0
         def ensure_page():
@@ -545,10 +562,14 @@ def _run(cti, now, nm, dry, only, t0=None):
                             ok, note = set_serving(ensure_page(), shopdir, b, end_text)
                         except Exception as e:
                             ok, note = False, f"押せなかった {type(e).__name__} {str(e)[:80]}"
-                    try:
-                        cti_ok, cti_note = cti.mark_timed(tb["rid"], now=now)
-                    except Exception as e:
-                        cti_ok, cti_note = False, f"CTIで押せなかった {type(e).__name__} {str(e)[:80]}"
+                    if tb["rid"] in done_rids:
+                        # 同時在籍の子：CTIの予約は1つなので、1つ目の店で時間付けを押した。ここではヘブンだけ合わせる
+                        cti_ok, cti_note = True, "ほかの店で時間付け済み（同時在籍）"
+                    else:
+                        try:
+                            cti_ok, cti_note = cti.mark_timed(tb["rid"], now=now)
+                        except Exception as e:
+                            cti_ok, cti_note = False, f"CTIで押せなかった {type(e).__name__} {str(e)[:80]}"
                     done_rids.add(tb["rid"])
                     entry.update(ok=ok, note=note, cti_ok=cti_ok, cti_note=cti_note)
                     print(f"    時間付け {label} ＊＊ ヘブン:{ok} CTI:{cti_ok} {str(cti_note)[:120]}")
@@ -584,7 +605,8 @@ def _run(cti, now, nm, dry, only, t0=None):
                 time.sleep(1.0)
             new.append(entry)
             n_set += 1
-        print(f"  {label}: 箱{len(boxes)} → 直した{n_set}・そのまま{n_skip}・CTIに名前が無い{n_nomatch}" + (f"（時の選択肢 {hours[:3]}…{hours[-2:]}）" if hours else "（時の選択肢が読めない）"))
+        n_multi = sum(1 for pz in pm.values() if pz is not None and cti_schedule.is_multi(pz))
+        print(f"  {label}: 箱{len(boxes)} → 直した{n_set}・そのまま{n_skip}・CTIに名前が無い{n_nomatch}・同時在籍と合った{n_multi}" + (f"（時の選択肢 {hours[:3]}…{hours[-2:]}）" if hours else "（時の選択肢が読めない）"))
         if st["page"] is not None:
             st["page"].context.close()
     browser.close()
