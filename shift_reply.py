@@ -47,7 +47,7 @@ _ANY_TIME = re.compile(r"\d{1,2}\s*時|\d{1,2}:\d{2}")
 
 def _has_time_left(txt):
     """日にちの書き方を取り除いたあとに数字が残っていれば、時間らしきものが書いてある（「26日 12〜ラスト」）。"""
-    for rx in (MD, DAYSPAN, DAYS, WEEKDAY):
+    for rx in (SPAN, MD, DAYSPAN, DAYS, WEEKDAY):
         txt = rx.sub(" ", txt)
     return bool(re.search(r"\d", txt))
 HEDGE_RE = (re.compile(r"日か(?!ら)"), re.compile(r"時か(?!ら)"))   # 「26日か27日」「15時か18時」
@@ -56,7 +56,8 @@ HEDGE_RE = (re.compile(r"日か(?!ら)"), re.compile(r"時か(?!ら)"))   # 「2
 GLOBAL = ("？", "?", "ですか", "ますか", "でしょうか", "ずらし", "代わり", "かわり", "やっぱ",
           "じゃな", "ではな", "でなく", "入れ替", "延長", "短縮", "早め", "遅ら", "上がりたい", "あがりたい",
           "やめ", "辞め", "なしに", "無しに", "の分", "さっき", "間違", "→", "➡", "⇒",
-          "撮影", "撮り", "撮る", "撮っ", "写真", "髪型", "パネル", "美容", "引越", "引っ越", "業者", "面談")
+          "撮影", "撮り", "撮る", "撮っ", "写真", "髪型", "パネル", "美容", "引越", "引っ越", "業者", "面談",
+          "日間")      # 「28日から2日間」を28日だけと読まない（2026-11-25）
 # 「変更」「変えて」でも、書いた日の時間を書いた時間に直すだけなら、そのまま上げ直す（返事は変更の定型）
 # （2026-10-17 ある子の時間だけの変更が人に回されたまま放置された）
 # ただし形をしぼる：日が1つ・時間の範囲が1つ・時刻が2つまで・2時間より長い・休みや未定が無い・下の言葉が無い
@@ -78,6 +79,11 @@ RANGE = re.compile(_TIME + r"\s*(?:〜|から|より)\s*" + _TIME + r"\s*(?:ま�
 LAST_WORDS = re.compile(r"(\d{1,2}\s*時(?:\s*\d{1,2}\s*分|半)?|\d{1,2}:\d{2})\s*(?:〜|から|より)\s*(?:ラスト|らすと|最後まで|閉店まで)(?:まで)?")
 MD = re.compile(r"(?<!\d)(\d{1,2})\s*(?:月|/)\s*(\d{1,2})\s*日?(?!\d)")
 DAYSPAN = re.compile(r"(?<!\d)(\d{1,2})\s*日?\s*〜\s*(\d{1,2})\s*日")                      # 「9〜13日」「26日〜28日」
+# 日にちの範囲（月をまたぐ・「から〜まで」も）。「28日~12月6日」「28〜6日」「11/28〜12/6」「28日から6日まで」は、その間の毎日（2026-11-25
+# ある子の「28日~12月6日13:00~26:00」を、両端の28日と6日だけと読んで返していた）。長すぎる・逆さまの範囲は人に回す
+SPAN = re.compile(r"(?<![\d/])(?:(\d{1,2})\s*(?:月|/)\s*)?(\d{1,2})\s*日?\s*(?:〜|から)\s*"
+                  r"(?:(\d{1,2})\s*(?:月|/)\s*(\d{1,2})(?!\s*(?:時|:))\s*日?|(\d{1,2})\s*日(?![間目前後]))(?:\s*まで)?")
+MAX_SPAN_DAYS = 14
 DAYS = re.compile(r"(?<!\d)((?:\d{1,2}\s*[、,.・と]\s*)*\d{1,2})\s*日(?![間目前後])")
 WEEKDAY = re.compile(r"(?<!\d)(\d{1,2})\s*\(\s*[月火水木金土日祝]\s*\)")                  # 「28(月)」
 BARE_LIST = re.compile(r"(?<![\d:])(\d{1,2}(?:\s*[、,・]\s*\d{1,2})+)(?=\s+\d{1,2}\s*(?:時|:))")   # 「29、30、2 10時から15時」
@@ -89,6 +95,7 @@ _CLAUSE = re.compile(r"\s+/\s+|\n+|[。！!]+")          # 「 / 」は見張り
 def _norm(t, shop=None):
     t = (t or "").translate(_Z2H).replace("　", " ")
     t = _DASH.sub("〜", t)
+    t = re.sub(r"(?<=日)\s*[ーｰ−－—–―‐‑‒⁃﹣∼〰\-~～]\s*(?=\d{1,2}\s*(?:月|/|日))", "〜", t)   # 「28日~12月6日」（2026-11-25）
     # 「19時30分~lastまで」「18時〜LAST」も「ラスト」として読む（2026-09-29）
     t = re.sub(r"last", "ラスト", t, flags=re.IGNORECASE)
     t = re.sub(r"[~～]\s*(?=ラスト|らすと|最後|閉店)", "〜", t)
@@ -101,6 +108,8 @@ def _norm(t, shop=None):
 def _tokens(t):
     """節の中から、日にち・時間の範囲を、出てくる順に拾う。重なりは先に出た方を取る。"""
     found = []
+    for m in SPAN.finditer(t):
+        found.append((m.start(), m.end(), -1, "span", m.groups()))
     for m in MD.finditer(t):
         found.append((m.start(), m.end(), 0, "md", (int(m.group(1)), int(m.group(2)))))
     for m in DAYSPAN.finditer(t):
@@ -157,6 +166,34 @@ def _resolve_day(day, today):
     return None
 
 
+def _span_days(g, today):
+    """SPAN の中身 → その間の毎日。読み切れない・長すぎる・過ぎた日から始まる時は None（人へ）。"""
+    m1, a, m2, b2, b = g
+    a = int(a)
+    try:
+        if m2:
+            end = _resolve_md(int(m2), int(b2), today)
+        else:
+            end = _resolve_day(int(b), today)
+        if end is None:
+            return None
+        if m1:
+            start = date(end.year, int(m1), a)
+            if start > end:
+                start = date(end.year - 1, int(m1), a)
+        else:
+            start = date(end.year, end.month, a) if a <= end.day else None
+            if start is None:
+                y, mo = (end.year, end.month - 1) if end.month > 1 else (end.year - 1, 12)
+                start = date(y, mo, a)
+    except ValueError:
+        return None
+    n = (end - start).days
+    if not 1 <= n <= MAX_SPAN_DAYS or start < today:      # 過ぎた日から始まる範囲は、どの月のことか迷うので人へ
+        return None
+    return [start + timedelta(days=i) for i in range(n + 1)]
+
+
 def _resolve_md(month, day, today):
     for y in (today.year, today.year + 1):
         try:
@@ -198,7 +235,12 @@ def read_shift_reply(body, now=None, shop=None):
         starts = []
         cg = []
         for s, kind, data in toks:
-            if kind in ("md", "days", "rel"):
+            if kind == "span":
+                ds = _span_days(data, today)
+                if ds is None:
+                    return result("unclear", "日にちの範囲が読み切れない（長すぎ・逆さま・過ぎた日から）")
+                kind, data = "dates", ds
+            if kind in ("md", "days", "rel", "dates"):
                 if not cg or cg[-1]["range"] is not None:
                     g = {"days": [], "range": None, "start": s}
                     cg.append(g)
@@ -208,6 +250,8 @@ def read_shift_reply(body, now=None, shop=None):
                     g["days"].append(_resolve_md(data[0], data[1], today) or f"{data[0]}/{data[1]}")
                 elif kind == "days":
                     g["days"].extend(_resolve_day(x, today) or x for x in data)
+                elif kind == "dates":
+                    g["days"].extend(data)
                 else:
                     g["days"].append(today + timedelta(days=data))
             else:   # range

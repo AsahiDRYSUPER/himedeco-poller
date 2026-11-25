@@ -152,6 +152,22 @@ for txt in ("22日を23日に変更お願いします", "22→23に変更で 17�
     if r["status"] != "unclear":
         ok = False
         print(f"✗ unclear のはず: {txt!r} → {r}")
+# 日にちの範囲（月をまたぐ・「から〜まで」）は、その間の毎日（2026-11-25 「28日~12月6日」を28日と6日だけと読んでいた）
+NOW6 = datetime(2026, 11, 25, 18, 5)
+_r = lambda a, b, s_, e_: [(date(2026, 11, d) if d >= 20 else date(2026, 12, d), s_, e_) for d in list(range(a, 31)) + list(range(1, b + 1))]
+chk("26日14:00~22:00\n28日~12月6日13:00~26:00\nでお願いします", None, "clear",
+    [(date(2026, 11, 26), "14:00", "22:00")] + _r(28, 6, "13:00", "26:00"), now=NOW6)
+chk("28〜6日 13時〜26時", None, "clear", _r(28, 6, "13:00", "26:00"), now=NOW6)
+chk("28日から12月6日まで 13〜26時", None, "clear", _r(28, 6, "13:00", "26:00"), now=NOW6)
+chk("11/28〜12/6 13時〜26時", None, "clear", _r(28, 6, "13:00", "26:00"), now=NOW6)
+chk("26日から28日まで12時〜20時", None, "clear", [(date(2026, 11, d), "12:00", "20:00") for d in (26, 27, 28)], now=NOW6)
+for txt in ("28日~12月20日 13〜20時", "26日〜24日 12〜20時", "28日から2日間 13〜20時", "24日〜27日 18〜23時"):   # 長すぎ・逆さま・「◯日間」・過ぎた日から → 人へ
+    r = read_shift_reply(txt, NOW6, None)
+    if r["status"] != "unclear":
+        ok = False
+        print(f"✗ unclear のはず: {txt!r} → {r}")
+r = read_shift_reply("26日 12〜20時、28〜30日はお休み", NOW6, None)
+assert r["status"] == "partial" and r["declined"] == [date(2026, 11, d) for d in (28, 29, 30)], r
 r = read_shift_reply("試験です 29日23時からラスト", NOW2, None)
 assert r["display"] == ["29日 23:00〜ラスト"], r["display"]
 # 「ラスト」の時刻の決まり（鍵つき）が開けない時は、読み切れない（人へ）
