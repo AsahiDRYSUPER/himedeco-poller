@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write   # 卍さんへの LINE の窓口に名乗る（owner_line.py。2026-11-25）
   actions: write
 
 concurrency:

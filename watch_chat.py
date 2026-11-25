@@ -397,6 +397,15 @@ def notify_one(x, result=None, urahime=None, auto=None):
                 body += f"\n\n🤖 AIの判断：{data.get('action')}（女の子には送っていません）"
             if (data.get("owner_note") or "").strip():
                 body += "\n📝 " + data["owner_note"].strip()[:220]
+            if data.get("action") in ("reply_and_notify", "notify_only") and (data.get("owner_note") or "").strip():
+                # 「卍に伝えた」の中身を、スマホ通知だけでなく卍さんの LINE（公式LINE AI卍）にも送る（2026-11-25 一希さん「LINEで送られてくる形に」）
+                try:
+                    import owner_line
+                    msg = (f'🔔 サブ卍から：{x["shop"]} {x["name"]}\n{data["owner_note"].strip()[:600]}\n\n本人：「{x["body"][:300]}」\n' +
+                           ("（本人には返事を送っています：「" + reply_text[:200] + "」）" if send and sent else "（本人にはまだ返していません）"))
+                    owner_line.note(msg, f'{x["shopdir"]}:{x["id"]}')
+                except Exception as e:
+                    print("卍さんへのLINE：止まった", type(e).__name__)
             y = data.get("yoasobi") or {}
             if y.get("is_answer"):
                 body += (f"\n🌏 答え：英★{y.get('lang_en')} 中★{y.get('lang_zh')} 韓★{y.get('lang_kr')}"
